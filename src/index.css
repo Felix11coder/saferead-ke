@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Prevent copying, printing, screenshots */
+body {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+canvas {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* Optional: hide scrollbar for clean look */
+::-webkit-scrollbar {
+  display: none;
+}

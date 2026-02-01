@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SafeRead KE</title>
+    <!-- Add this script to disable right-click, print, save globally -->
+    <script>
+      // Disable right-click context menu
+      document.addEventListener('contextmenu', e => e.preventDefault());
+
+      // Disable print (Ctrl+P), save (Ctrl+S), select all (Ctrl+A), copy (Ctrl+C)
+      document.addEventListener('keydown', e => {
+        if (
+          e.ctrlKey && (
+            e.key === 'p' || e.key === 's' || e.key === 'a' || e.key === 'c' ||
+            e.keyCode === 80 || e.keyCode === 83 || e.keyCode === 65 || e.keyCode === 67
+          )
+        ) {
+          e.preventDefault();
+        }
+      });
+
+      // Disable print screen (partial – browser limitation)
+      document.addEventListener('keydown', e => {
+        if (e.key === 'PrintScreen') e.preventDefault();
+      });
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
