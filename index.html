@@ -4,12 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SafeRead KE</title>
-    <!-- Add this script to disable right-click, print, save globally -->
+    <!-- Disable right-click, print, save globally -->
     <script>
-      // Disable right-click context menu
       document.addEventListener('contextmenu', e => e.preventDefault());
 
-      // Disable print (Ctrl+P), save (Ctrl+S), select all (Ctrl+A), copy (Ctrl+C)
       document.addEventListener('keydown', e => {
         if (
           e.ctrlKey && (
@@ -21,11 +19,13 @@
         }
       });
 
-      // Disable print screen (partial – browser limitation)
       document.addEventListener('keydown', e => {
         if (e.key === 'PrintScreen') e.preventDefault();
       });
     </script>
+    <!-- Google AdSense -->
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2755904803851096"
+        crossorigin="anonymous"></script>
   </head>
   <body>
     <div id="root"></div>
