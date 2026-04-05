@@ -1,366 +1,450 @@
+// src/App.jsx
 import { useState, useEffect } from 'react'
 import { supabase } from './supabaseClient'
 import BookUpload from './components/BookUpload'
 import AdminDashboard from './components/AdminDashboard'
 import SecureReader from './components/SecureReader'
-// Genres list
-const genres = ['Sci-Fi', 'Romance', 'Mystery', 'Fantasy', 'Horror', 'Thriller', 'Historical', 'Biography', 'Self-Help', 'Poetry', 'Young Adult', 'Business', 'Science', 'Travel', 'Cooking', 'Art', 'Religion', 'Health', 'Other']
+import AuthorDashboard from './components/AuthorDashboard'
+import ReaderDashboard from './components/ReaderDashboard'
+
+import readerDashboardBg from './assets/readerdashboard.jpg'
+import authorDashboardBg from './assets/authordashboard.jpg'
+import adminDashboardBg from './assets/AdminDashboard1.png'
+
+const genres = [
+  'Sci-Fi', 'Romance', 'Mystery', 'Fantasy', 'Horror', 'Thriller', 'Historical',
+  'Biography', 'Self-Help', 'Poetry', 'Young Adult', 'Business', 'Science',
+  'Travel', 'Cooking', 'Art', 'Religion', 'Health', 'Other'
+]
+
 function App() {
   const [user, setUser] = useState(null)
   const [userRole, setUserRole] = useState(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [signupRole, setSignupRole] = useState('reader')
+  const [authorName, setAuthorName] = useState('')
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
+  const [showResetPassword, setShowResetPassword]   = useState(false)
+  const [newPassword, setNewPassword]               = useState('')
+  const [resetEmail, setResetEmail] = useState('')
+  const [resetSent, setResetSent] = useState(false)
   const [loading, setLoading] = useState(false)
   const [books, setBooks] = useState([])
   const [selectedGenre, setSelectedGenre] = useState('Home')
   const [readerTab, setReaderTab] = useState('home')
   const [authorTab, setAuthorTab] = useState('home')
   const [selectedBookForReading, setSelectedBookForReading] = useState(null)
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
       if (session?.user) fetchUserRole(session.user.id)
     })
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (_event === 'PASSWORD_RECOVERY') {
+        // User clicked the reset link — show new password form instead of logging in
+        setShowResetPassword(true)
+        setUser(session?.user ?? null)
+        return
+      }
       setUser(session?.user ?? null)
       if (session?.user) fetchUserRole(session.user.id)
     })
+
     return () => subscription.unsubscribe()
   }, [])
+
   const fetchUserRole = async (userId) => {
     const { data } = await supabase.from('users').select('role').eq('id', userId).single()
     setUserRole(data?.role || 'reader')
   }
+
   const fetchBooks = async () => {
     const { data, error } = await supabase
       .from('books')
-      .select('id, title, genre, author_id, file_path, cover_path, status, created_at')  // explicit + cover_path
+      .select('id, title, genre, author_id, author_name, file_path, cover_path, status, created_at')
       .eq('status', 'approved')
     if (error) {
       console.error('Fetch books error:', error)
       return
     }
-    console.log('Fetched books full objects:', data)  // full objects
     setBooks(data || [])
   }
+
   useEffect(() => {
     if (user) fetchBooks()
   }, [user])
+
   const handleSignup = async () => {
-    setLoading(true)
-    const selectedRole = signupRole === 'author' ? 'author' : 'reader'
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { role: selectedRole } }
-    })
-    if (error) {
-      alert('Error: ' + error.message)
-    } else {
-      await supabase.from('users').insert({
-        id: data.user.id,
-        email: data.user.email,
-        role: selectedRole,
-        balance: 0
-      })
-      alert('Account created! Check email for confirmation.')
+    if (!email || !password) {
+      alert('Please enter email and password')
+      return
     }
-    setLoading(false)
-  }
-  const handleLogin = async () => {
+    if (password.length < 6) {
+      alert('Password must be at least 6 characters long')
+      return
+    }
+    if (signupRole === 'author' && !authorName.trim()) {
+      alert('Please enter your author name.')
+      return
+    }
     setLoading(true)
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) alert('Error: ' + error.message)
+    try {
+      const selectedRole = signupRole === 'author' ? 'author' : 'reader'
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim().toLowerCase(),
+        password,
+        options: { data: { role: selectedRole } }
+      })
+      if (error) {
+        if (
+          error.message?.toLowerCase().includes('already') ||
+          error.message?.toLowerCase().includes('exists') ||
+          error.status === 422 ||
+          error.code === '225'
+        ) {
+          alert('This email is already registered. Please try logging in instead.')
+        } else {
+          alert('Signup failed: ' + error.message)
+        }
+        return
+      }
+      if (data.user) {
+        await supabase.from('users').insert({
+          id:          data.user.id,
+          email:       data.user.email,
+          role:        selectedRole,
+          author_name: selectedRole === 'author' ? authorName.trim() : null,
+          balance:     0
+        })
+        alert('Account created successfully! Please check your email for confirmation.')
+      }
+    } catch (err) {
+      console.error('Unexpected signup error:', err)
+      alert('Unexpected error occurred. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleLogin = async () => {
+    if (!email || !password) {
+      alert('Please enter email and password')
+      return
+    }
+    setLoading(true)
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password
+    })
+    if (error) alert('Login failed: ' + error.message)
     setLoading(false)
   }
+
   const handleLogout = async () => {
     await supabase.auth.signOut()
     setUser(null)
     setUserRole(null)
   }
-  const openReader = (book) => {
-    setSelectedBookForReading(book)
+
+  const handleForgotPassword = async () => {
+    if (!resetEmail.trim()) {
+      alert('Please enter your email address.')
+      return
+    }
+    setLoading(true)
+    const { error } = await supabase.auth.resetPasswordForEmail(
+      resetEmail.trim().toLowerCase(),
+      { redirectTo: window.location.origin }
+    )
+    setLoading(false)
+    if (error) {
+      alert('Failed to send reset email: ' + error.message)
+    } else {
+      setResetSent(true)
+    }
   }
-  const closeReader = () => {
-    setSelectedBookForReading(null)
+  const handleSetNewPassword = async () => {
+    if (!newPassword || newPassword.length < 6) {
+      alert('Password must be at least 6 characters.')
+      return
+    }
+    setLoading(true)
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+    setLoading(false)
+    if (error) {
+      alert('Failed to update password: ' + error.message)
+    } else {
+      alert('Password updated successfully! You are now logged in.')
+      setShowResetPassword(false)
+      setNewPassword('')
+      // Fetch role so the correct dashboard loads
+      if (user) fetchUserRole(user.id)
+    }
   }
-  const filteredBooks = selectedGenre === 'Home' ? [] : books.filter(book => book.genre === selectedGenre)
-  if (!user) {
+
+  const openReader  = (book) => setSelectedBookForReading(book)
+  const closeReader = ()     => setSelectedBookForReading(null)
+
+  const filteredBooks = selectedGenre === 'Home'
+    ? []
+    : books.filter(book => book.genre === selectedGenre)
+
+  // ── Set new password screen (after clicking reset link in email) ────────
+  if (showResetPassword) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
-        <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-md">
-          <h1 className="text-3xl font-bold text-center mb-8 text-blue-800">SafeRead KE</h1>
+        <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-2xl w-full max-w-md">
+          <h1 className="text-2xl sm:text-3xl font-bold text-center mb-2 text-blue-800">SafeRead KE</h1>
+          <h2 className="text-lg font-semibold text-center mb-6 text-gray-600">Set a new password</h2>
+          <p className="text-gray-500 text-sm mb-5 text-center">
+            Choose a strong password for your account.
+          </p>
+          <input
+            type="password"
+            placeholder="New password (6+ characters)"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            className="w-full p-3 mb-4 border border-gray-300 rounded-xl focus:outline-none focus:border-blue-500"
+          />
+          <button
+            onClick={handleSetNewPassword}
+            disabled={loading}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-medium transition disabled:opacity-70"
+          >
+            {loading ? 'Updating…' : 'Set New Password'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Login / Signup screen ────────────────────────────────────────────────
+  if (!user) {
+
+    // ── Forgot password screen ─────────────────────────────────────────
+    if (showForgotPassword) {
+      return (
+        <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+          <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-2xl w-full max-w-md">
+            <h1 className="text-2xl sm:text-3xl font-bold text-center mb-2 text-blue-800">SafeRead KE</h1>
+            <h2 className="text-lg font-semibold text-center mb-6 text-gray-600">Reset your password</h2>
+
+            {resetSent ? (
+              <div className="text-center">
+                <div className="text-5xl mb-4">📧</div>
+                <p className="text-gray-700 font-medium mb-2">Check your email!</p>
+                <p className="text-gray-500 text-sm mb-6">
+                  We sent a password reset link to <strong>{resetEmail}</strong>.
+                  Click the link in the email to set a new password.
+                </p>
+                <button
+                  onClick={() => { setShowForgotPassword(false); setResetSent(false); setResetEmail('') }}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-medium transition"
+                >
+                  Back to Login
+                </button>
+              </div>
+            ) : (
+              <>
+                <p className="text-gray-500 text-sm mb-5 text-center">
+                  Enter the email address linked to your account and we'll send you a reset link.
+                </p>
+                <input
+                  type="email"
+                  placeholder="Your email address"
+                  value={resetEmail}
+                  onChange={(e) => setResetEmail(e.target.value)}
+                  className="w-full p-3 mb-4 border border-gray-300 rounded-xl focus:outline-none focus:border-blue-500"
+                />
+                <button
+                  onClick={handleForgotPassword}
+                  disabled={loading}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-medium mb-3 transition disabled:opacity-70"
+                >
+                  {loading ? 'Sending…' : 'Send Reset Link'}
+                </button>
+                <button
+                  onClick={() => { setShowForgotPassword(false); setResetEmail('') }}
+                  className="w-full text-gray-500 hover:text-gray-700 py-2 text-sm transition"
+                >
+                  ← Back to Login
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+        <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-2xl w-full max-w-md">
+          <h1 className="text-2xl sm:text-3xl font-bold text-center mb-8 text-blue-800">SafeRead KE</h1>
+
+          {/* Step 1: Role selector */}
+          <div className="mb-5 text-center">
+            <p className="mb-3 font-semibold text-gray-700">I am joining as a:</p>
+            <div className="flex justify-center gap-4">
+              <label className={`flex-1 border-2 rounded-xl py-3 px-4 cursor-pointer transition text-center font-medium ${
+                signupRole === 'reader' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'
+              }`}>
+                <input
+                  type="radio"
+                  name="role"
+                  value="reader"
+                  checked={signupRole === 'reader'}
+                  onChange={(e) => setSignupRole(e.target.value)}
+                  className="hidden"
+                />
+                📖 Reader
+              </label>
+              <label className={`flex-1 border-2 rounded-xl py-3 px-4 cursor-pointer transition text-center font-medium ${
+                signupRole === 'author' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'
+              }`}>
+                <input
+                  type="radio"
+                  name="role"
+                  value="author"
+                  checked={signupRole === 'author'}
+                  onChange={(e) => setSignupRole(e.target.value)}
+                  className="hidden"
+                />
+                ✍️ Author
+              </label>
+            </div>
+          </div>
+
+          {/* Step 2: Author name — only shown when author is selected */}
+          {signupRole === 'author' && (
+            <input
+              type="text"
+              placeholder="Your full name or pen name *"
+              value={authorName}
+              onChange={(e) => setAuthorName(e.target.value)}
+              className="w-full p-3 mb-4 border-2 border-blue-300 rounded-xl focus:outline-none focus:border-blue-500 bg-blue-50"
+            />
+          )}
+
+          {/* Step 3: Email & password */}
           <input
             type="email"
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full p-3 mb-4 border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+            className="w-full p-3 mb-4 border border-gray-300 rounded-xl focus:outline-none focus:border-blue-500"
           />
           <input
             type="password"
             placeholder="Password (6+ characters)"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full p-3 mb-4 border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+            className="w-full p-3 mb-4 border border-gray-300 rounded-xl focus:outline-none focus:border-blue-500"
           />
-          <div className="mb-6 text-center">
-            <p className="mb-2 font-semibold">Choose account type (permanent):</p>
-            <label className="mr-6">
-              <input type="radio" name="role" value="reader" checked={signupRole === 'reader'} onChange={(e) => setSignupRole(e.target.value)} />
-              Reader
-            </label>
-            <label>
-              <input type="radio" name="role" value="author" checked={signupRole === 'author'} onChange={(e) => setSignupRole(e.target.value)} />
-              Author
-            </label>
-          </div>
+
           <button
             onClick={handleSignup}
             disabled={loading}
-            className="w-full bg-blue-500 text-white py-3 rounded mb-3 hover:bg-blue-600 transition"
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-medium mb-3 transition disabled:opacity-70"
           >
-            {loading ? 'Loading...' : 'Create Account'}
+            {loading ? 'Creating Account…' : 'Create Account'}
           </button>
           <button
             onClick={handleLogin}
             disabled={loading}
-            className="w-full bg-green-500 text-white py-3 rounded hover:bg-green-600 transition"
+            className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-medium transition disabled:opacity-70"
           >
-            {loading ? 'Loading...' : 'Login'}
+            {loading ? 'Logging in…' : 'Login'}
+          </button>
+
+          <button
+            onClick={() => { setShowForgotPassword(true); setResetEmail(email) }}
+            className="w-full text-center text-sm text-blue-500 hover:text-blue-700 mt-3 transition"
+          >
+            Forgot your password?
           </button>
         </div>
       </div>
     )
   }
+
+  // ── Main app ─────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-gray-100 flex flex-col">
       <header className="bg-blue-800 text-white p-4 shadow-md">
-        <div className="max-w-6xl mx-auto flex justify-between items-center">
-          <h1 className="text-2xl font-bold">SafeRead KE</h1>
-          <div className="flex items-center gap-4">
-            <p>Welcome, {user.email} ({userRole})</p>
-            <button onClick={handleLogout} className="bg-red-500 px-4 py-2 rounded hover:bg-red-600 transition">
+        <div className="max-w-7xl mx-auto flex justify-between items-center">
+          <h1 className="text-xl sm:text-2xl font-bold">SafeRead KE</h1>
+          <div className="flex items-center gap-3 sm:gap-4">
+            <p className="text-sm sm:text-base hidden sm:block">
+              Welcome, {user.email} ({userRole})
+            </p>
+            <button
+              onClick={handleLogout}
+              className="bg-red-500 hover:bg-red-600 px-4 py-2 text-sm sm:text-base rounded-lg transition"
+            >
               Logout
             </button>
           </div>
         </div>
       </header>
-      {/* ADMIN */}
-      {userRole === 'admin' && (
-        <div className="max-w-6xl mx-auto p-8">
-          <AdminDashboard />
-        </div>
-      )}
-      {/* AUTHOR */}
-      {userRole === 'author' && (
-        <div>
-          <nav className="bg-blue-100 p-4 shadow">
-            <div className="max-w-6xl mx-auto overflow-x-auto">
-              <ul className="flex gap-6 whitespace-nowrap">
-                <li>
-                  <button
-                    onClick={() => setAuthorTab('home')}
-                    className={`px-6 py-3 rounded font-medium ${authorTab === 'home' ? 'bg-blue-600 text-white' : 'bg-white text-blue-600 hover:bg-blue-200'}`}
-                  >
-                    Home
-                  </button>
-                </li>
-                <li>
-                  <button
-                    onClick={() => setAuthorTab('upload')}
-                    className={`px-6 py-3 rounded font-medium ${authorTab === 'upload' ? 'bg-blue-600 text-white' : 'bg-white text-blue-600 hover:bg-blue-200'}`}
-                  >
-                    Upload
-                  </button>
-                </li>
-                <li>
-                  <button
-                    onClick={() => setAuthorTab('genres')}
-                    className={`px-6 py-3 rounded font-medium ${authorTab === 'genres' ? 'bg-blue-600 text-white' : 'bg-white text-blue-600 hover:bg-blue-200'}`}
-                  >
-                    Genres
-                  </button>
-                </li>
-              </ul>
-            </div>
-          </nav>
-          {authorTab === 'home' && (
-            <main className="max-w-6xl mx-auto p-8">
-              <h2 className="text-3xl font-bold mb-8 text-center">Author Home</h2>
-              <p className="text-center text-gray-600">Welcome! Use Upload to add new books, or Genres to view your approved titles.</p>
-            </main>
-          )}
-          {authorTab === 'upload' && (
-            <div className="max-w-4xl mx-auto p-8">
-              <BookUpload user={user} />
-            </div>
-          )}
-          {authorTab === 'genres' && (
-            <div>
-              <nav className="bg-blue-50 p-4 shadow mb-8">
-                <div className="max-w-6xl mx-auto overflow-x-auto">
-                  <ul className="flex gap-4 whitespace-nowrap">
-                    {genres.map(g => (
-                      <li key={g}>
-                        <button
-                          onClick={() => setSelectedGenre(g)}
-                          className={`px-6 py-3 rounded font-medium ${
-                            selectedGenre === g ? 'bg-blue-600 text-white' : 'bg-white text-blue-600 hover:bg-blue-200'
-                          }`}
-                        >
-                          {g}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </nav>
-              <main className="max-w-6xl mx-auto p-8">
-                <h2 className="text-3xl font-bold mb-8 text-center">{selectedGenre} Books</h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-8">
-                  {filteredBooks.length === 0 ? (
-                    <p className="col-span-full text-center text-gray-600">No books in this genre yet.</p>
-                  ) : (
-                    filteredBooks.map(book => {
-                      const coverUrl = book.cover_path
-                        ? supabase.storage.from('books').getPublicUrl(book.cover_path).data.publicUrl
-                        : 'https://placehold.co/200x300?text=No+Cover'
-                      console.log('Author grid - Book:', book.title, 'cover_path:', book.cover_path, 'generated URL:', coverUrl)
-                      return (
-                        <div key={book.id} className="bg-white rounded-lg shadow-lg overflow-hidden hover:shadow-xl transition">
-                          <img
-                            src={coverUrl}
-                            alt={book.title}
-                            className="w-full h-64 object-cover"
-                          />
-                          <div className="p-4">
-                            <h3 className="font-bold text-lg mb-2">{book.title}</h3>
-                            <p className="text-gray-600 mb-4">by Author ID: {book.author_id}</p>
-                            <button
-                              onClick={() => openReader(book)}
-                              className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-                            >
-                              Read Now
-                            </button>
-                          </div>
-                        </div>
-                      )
-                    })
-                  )}
-                </div>
-              </main>
-            </div>
-          )}
-        </div>
-      )}
-      {/* READER DASHBOARD */}
-      {userRole === 'reader' && (
-        <div>
-          <nav className="bg-blue-100 p-4 shadow">
-            <div className="max-w-6xl mx-auto overflow-x-auto">
-              <ul className="flex gap-6 whitespace-nowrap">
-                <li>
-                  <button
-                    onClick={() => setReaderTab('home')}
-                    className={`px-6 py-3 rounded font-medium ${readerTab === 'home' ? 'bg-blue-600 text-white' : 'bg-white text-blue-600 hover:bg-blue-200'}`}
-                  >
-                    Home
-                  </button>
-                </li>
-                <li>
-                  <button
-                    onClick={() => setReaderTab('genres')}
-                    className={`px-6 py-3 rounded font-medium ${readerTab === 'genres' ? 'bg-blue-600 text-white' : 'bg-white text-blue-600 hover:bg-blue-200'}`}
-                  >
-                    Genres
-                  </button>
-                </li>
-              </ul>
-            </div>
-          </nav>
-          {readerTab === 'home' && (
-            <main className="max-w-6xl mx-auto p-8">
-              <h2 className="text-3xl font-bold mb-8 text-center">Home</h2>
-              <p className="text-center text-gray-600">Welcome! Browse genres to find books.</p>
-            </main>
-          )}
-          {readerTab === 'genres' && (
-            <div>
-              <nav className="bg-blue-50 p-4 shadow mb-8">
-                <div className="max-w-6xl mx-auto overflow-x-auto">
-                  <ul className="flex gap-4 whitespace-nowrap">
-                    {genres.map(g => (
-                      <li key={g}>
-                        <button
-                          onClick={() => setSelectedGenre(g)}
-                          className={`px-6 py-3 rounded font-medium ${
-                            selectedGenre === g ? 'bg-blue-600 text-white' : 'bg-white text-blue-600 hover:bg-blue-200'
-                          }`}
-                        >
-                          {g}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </nav>
-              <main className="max-w-6xl mx-auto p-8">
-                <h2 className="text-3xl font-bold mb-8 text-center">{selectedGenre} Books</h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-8">
-                  {filteredBooks.length === 0 ? (
-                    <p className="col-span-full text-center text-gray-600">No books in this genre yet.</p>
-                  ) : (
-                    filteredBooks.map(book => {
-                      const coverUrl = book.cover_path
-                        ? supabase.storage.from('books').getPublicUrl(book.cover_path).data.publicUrl
-                        : 'https://placehold.co/200x300?text=No+Cover'
-                      console.log('Reader grid - Book:', book.title, 'cover_path:', book.cover_path, 'generated URL:', coverUrl)
-                      return (
-                        <div key={book.id} className="bg-white rounded-lg shadow-lg overflow-hidden hover:shadow-xl transition">
-                          <img
-                            src={coverUrl}
-                            alt={book.title}
-                            className="w-full h-64 object-cover"
-                          />
-                          <div className="p-4">
-                            <h3 className="font-bold text-lg mb-2">{book.title}</h3>
-                            <p className="text-gray-600 mb-4">by Author ID: {book.author_id}</p>
-                            <button
-                              onClick={() => openReader(book)}
-                              className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-                            >
-                              Read Now
-                            </button>
-                          </div>
-                        </div>
-                      )
-                    })
-                  )}
-                </div>
-              </main>
-            </div>
-          )}
-        </div>
-      )}
-      {/* FULL-PAGE READER VIEW */}
+
+      <main className="flex-1">
+        {userRole === 'admin' && (
+          <AdminDashboard adminDashboardBg={adminDashboardBg} />
+        )}
+        {userRole === 'author' && (
+          <AuthorDashboard
+            user={user}
+            authorTab={authorTab}
+            setAuthorTab={setAuthorTab}
+            selectedGenre={selectedGenre}
+            setSelectedGenre={setSelectedGenre}
+            genres={genres}
+            filteredBooks={filteredBooks}
+            openReader={openReader}
+            authorDashboardBg={authorDashboardBg}
+            isSidebarOpen={isSidebarOpen}
+            setIsSidebarOpen={setIsSidebarOpen}
+          />
+        )}
+        {userRole === 'reader' && (
+          <ReaderDashboard
+            readerTab={readerTab}
+            setReaderTab={setReaderTab}
+            selectedGenre={selectedGenre}
+            setSelectedGenre={setSelectedGenre}
+            genres={genres}
+            filteredBooks={filteredBooks}
+            openReader={openReader}
+            readerDashboardBg={readerDashboardBg}
+            isSidebarOpen={isSidebarOpen}
+            setIsSidebarOpen={setIsSidebarOpen}
+          />
+        )}
+      </main>
+
+      {/* ── Book reader modal ── */}
       {selectedBookForReading && (
-        <div className="fixed inset-0 bg-white z-50 overflow-auto">
-          <div className="p-4 bg-gray-100 border-b">
+        <div className="fixed inset-0 bg-white z-[100] overflow-auto">
+          <div className="p-4 bg-gray-100 border-b sticky top-0">
             <button
               onClick={closeReader}
-              className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700"
+              className="bg-gray-700 text-white px-5 py-2 rounded-lg hover:bg-gray-800"
             >
-              Back to List
+              ← Back to List
             </button>
           </div>
           <div className="p-4">
-            <SecureReader bookPath={selectedBookForReading.file_path} />
+            {/* Pass the full book object so SecureReader can log page views */}
+            <SecureReader book={selectedBookForReading} />
           </div>
         </div>
       )}
     </div>
   )
 }
+
 export default App
