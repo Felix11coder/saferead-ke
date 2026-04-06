@@ -157,8 +157,19 @@ export default function AdminDashboard({ adminDashboardBg }) {
         .eq('id', bookId)
       if (error) throw error
       setApprovedBooks(prev => prev.map(b =>
-        b.id === bookId ? { ...b, is_paid: newIsPaid } : b
+        b.id === bookId ? { ...b, is_paid: newIsPaid, price: newIsPaid ? (currentPrice || 0) : 0 } : b
       ))
+      // Auto-open price editor when switching TO paid
+      if (newIsPaid) {
+        setEditingPrice(bookId)
+        setPriceInput(currentPrice || '')
+      } else {
+        // Close editor if switching back to free
+        if (editingPrice === bookId) {
+          setEditingPrice(null)
+          setPriceInput('')
+        }
+      }
     } catch (err) { alert('Failed to update: ' + err.message) }
     finally { setTogglingPaid(null) }
   }
@@ -407,14 +418,27 @@ export default function AdminDashboard({ adminDashboardBg }) {
 
                         {book.is_paid && (
                           editingPrice === book.id ? (
-                            <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.4rem' }}>
-                              <input type="number" value={priceInput} onChange={e => setPriceInput(e.target.value)} placeholder="KES" style={{ flex: 1, padding: '0.3rem', borderRadius: '5px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: 'white', fontSize: '0.85rem', outline: 'none' }} />
-                              <button onClick={() => savePrice(book.id)} style={{ padding: '0.3rem 0.5rem', borderRadius: '5px', border: 'none', background: '#22c55e', color: '#0a0b0d', fontSize: '0.8rem', cursor: 'pointer' }}>✓</button>
-                              <button onClick={() => { setEditingPrice(null); setPriceInput('') }} style={{ padding: '0.3rem 0.5rem', borderRadius: '5px', border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: 'rgba(255,255,255,0.65)', fontSize: '0.8rem', cursor: 'pointer' }}>✕</button>
+                            <div style={{ marginBottom: '0.4rem' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '6px', padding: '0.25rem 0.4rem', marginBottom: '0.3rem' }}>
+                                <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.75rem', fontFamily: 'sans-serif', whiteSpace: 'nowrap' }}>KES</span>
+                                <input
+                                  type="number"
+                                  value={priceInput}
+                                  onChange={e => setPriceInput(e.target.value)}
+                                  onKeyDown={e => { if (e.key === 'Enter') savePrice(book.id) }}
+                                  placeholder="0"
+                                  autoFocus
+                                  style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', color: 'white', fontSize: '0.9rem', outline: 'none', fontWeight: 600 }}
+                                />
+                              </div>
+                              <div style={{ display: 'flex', gap: '0.25rem' }}>
+                                <button onClick={() => savePrice(book.id)} style={{ flex: 1, padding: '0.3rem', borderRadius: '5px', border: 'none', background: '#22c55e', color: '#0a0b0d', fontSize: '0.8rem', cursor: 'pointer', fontWeight: 700 }}>Save ✓</button>
+                                <button onClick={() => { setEditingPrice(null); setPriceInput('') }} style={{ padding: '0.3rem 0.5rem', borderRadius: '5px', border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: 'rgba(255,255,255,0.5)', fontSize: '0.8rem', cursor: 'pointer' }}>✕</button>
+                              </div>
                             </div>
                           ) : (
-                            <button onClick={() => { setEditingPrice(book.id); setPriceInput(book.price || '') }} style={{ width: '100%', padding: '0.3rem', borderRadius: '5px', border: '1px solid rgba(255,255,255,0.07)', background: 'transparent', color: 'rgba(255,255,255,0.85)', fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'sans-serif', marginBottom: '0.4rem' }}>
-                              ✏ Edit price
+                            <button onClick={() => { setEditingPrice(book.id); setPriceInput(book.price || '') }} style={{ width: '100%', padding: '0.3rem', borderRadius: '5px', border: '1px solid rgba(251,191,36,0.2)', background: 'rgba(251,191,36,0.06)', color: '#fbbf24', fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'sans-serif', marginBottom: '0.4rem' }}>
+                              ✏ Set price
                             </button>
                           )
                         )}
