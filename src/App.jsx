@@ -38,6 +38,7 @@ function App() {
   const [authorTab, setAuthorTab] = useState('home')
   const [selectedBookForReading, setSelectedBookForReading] = useState(null)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -58,34 +59,6 @@ function App() {
 
     return () => subscription.unsubscribe()
   }, [])
-
-
-  // ── Auto logout after 24 hours of inactivity ──────────────────────────
-  useEffect(() => {
-    if (!user) return
-
-    const TIMEOUT = 24 * 60 * 60 * 1000  // 24 hours in ms
-    let timer
-
-    const resetTimer = () => {
-      clearTimeout(timer)
-      timer = setTimeout(async () => {
-        await supabase.auth.signOut()
-        setUser(null)
-        setUserRole(null)
-        alert('You have been logged out due to inactivity.')
-      }, TIMEOUT)
-    }
-
-    const events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart']
-    events.forEach(e => window.addEventListener(e, resetTimer))
-    resetTimer()
-
-    return () => {
-      clearTimeout(timer)
-      events.forEach(e => window.removeEventListener(e, resetTimer))
-    }
-  }, [user])
 
   const fetchUserRole = async (userId) => {
     const { data } = await supabase
@@ -494,23 +467,49 @@ function App() {
       <header style={{
         background: 'rgba(10,11,13,0.97)',
         borderBottom: '1px solid rgba(255,255,255,0.08)',
-        padding: '0.75rem 1rem',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0.625rem 1rem',
+        display: 'flex', alignItems: 'center', gap: '0.75rem',
         position: 'sticky', top: 0, zIndex: 100, backdropFilter: 'blur(20px)'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        {/* Logo */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
           <span style={{ fontSize: '1.1rem' }}>📚</span>
-          <h1 style={{
-            fontSize: '1rem', fontWeight: 700, fontFamily: 'Georgia, serif',
-            color: 'white', letterSpacing: '0.025em'
-          }}>SafeRead KE</h1>
+          <h1 style={{ fontSize: '1rem', fontWeight: 700, fontFamily: 'Georgia, serif', color: 'white', letterSpacing: '0.025em' }}>
+            SafeRead KE
+          </h1>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <div style={{ textAlign: 'right', maxWidth: '150px', overflow: 'hidden' }}>
-            <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.85)', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+
+        {/* Search bar */}
+        <div style={{ flex: 1, position: 'relative', maxWidth: '480px' }}>
+          <span style={{ position: 'absolute', left: '0.65rem', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.3)', fontSize: '0.85rem', pointerEvents: 'none' }}>🔍</span>
+          <input
+            type="text"
+            placeholder={userRole === 'admin' ? 'Search books, users…' : 'Search books…'}
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            style={{
+              width: '100%', boxSizing: 'border-box',
+              padding: '0.45rem 2rem 0.45rem 2rem',
+              borderRadius: '10px', border: '1px solid rgba(255,255,255,0.1)',
+              background: 'rgba(255,255,255,0.07)', color: 'white',
+              fontSize: '0.85rem', outline: 'none', fontFamily: 'sans-serif'
+            }}
+            onFocus={e => e.target.style.borderColor = 'rgba(255,255,255,0.25)'}
+            onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
+          />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery('')}
+              style={{ position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}>×</button>
+          )}
+        </div>
+
+        {/* User + logout */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0, marginLeft: 'auto' }}>
+          <div style={{ textAlign: 'right', maxWidth: '120px', overflow: 'hidden' }}>
+            <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.85)', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', margin: 0 }}>
               {displayName || user.email}
             </p>
-            <p style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: 'sans-serif' }}>
+            <p style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: 'sans-serif', margin: 0 }}>
               {userRole}
             </p>
           </div>
@@ -534,7 +533,7 @@ function App() {
 
       <main className="flex-1">
         {userRole === 'admin' && (
-          <AdminDashboard adminDashboardBg={adminDashboardBg} />
+          <AdminDashboard adminDashboardBg={adminDashboardBg} searchQuery={searchQuery} />
         )}
         {userRole === 'author' && (
           <AuthorDashboard
@@ -549,6 +548,7 @@ function App() {
             authorDashboardBg={authorDashboardBg}
             isSidebarOpen={isSidebarOpen}
             setIsSidebarOpen={setIsSidebarOpen}
+            searchQuery={searchQuery}
           />
         )}
         {userRole === 'reader' && (
@@ -564,6 +564,7 @@ function App() {
             readerDashboardBg={readerDashboardBg}
             isSidebarOpen={isSidebarOpen}
             setIsSidebarOpen={setIsSidebarOpen}
+            searchQuery={searchQuery}
           />
         )}
       </main>

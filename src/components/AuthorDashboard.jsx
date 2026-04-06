@@ -34,7 +34,8 @@ export default function AuthorDashboard({
   openReader,
   authorDashboardBg,
   isSidebarOpen,
-  setIsSidebarOpen
+  setIsSidebarOpen,
+  searchQuery = ""
 }) {
   // ── stats state ────────────────────────────────────────────────────────
   const [statsLoading, setStatsLoading] = useState(false)
@@ -140,6 +141,16 @@ export default function AuthorDashboard({
   // ── format helpers ─────────────────────────────────────────────────────
   const fmt = n => `KES ${Number(n).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`
   const fmtDate = s => new Date(s).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })
+
+  // Search filtering
+  const q = searchQuery.trim().toLowerCase()
+  const searchedBooks = q
+    ? filteredBooks.filter(b =>
+        b.title?.toLowerCase().includes(q) ||
+        b.author_name?.toLowerCase().includes(q) ||
+        b.genre?.toLowerCase().includes(q)
+      )
+    : filteredBooks
 
   // ── render ─────────────────────────────────────────────────────────────
   const sidebarItems = [
@@ -278,11 +289,11 @@ export default function AuthorDashboard({
                   }}>{g}</button>
                 ))}
               </div>
-              {filteredBooks.length === 0 ? (
-                <p style={{ color: 'rgba(255,255,255,0.55)', padding: '4rem', textAlign: 'center' }}>No books in {selectedGenre} yet.</p>
+              {searchedBooks.length === 0 ? (
+                <p style={{ color: 'rgba(255,255,255,0.55)', padding: '4rem', textAlign: 'center' }}>{q ? `No results for \"{searchQuery}\"` : `No books in ${selectedGenre} yet.`}</p>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '1.25rem' }}>
-                  {filteredBooks.map(book => {
+                  {searchedBooks.map(book => {
                     const coverUrl = book.cover_path ? supabase.storage.from('books').getPublicUrl(book.cover_path).data.publicUrl : 'https://placehold.co/300x450?text=No+Cover'
                     return (
                       <div key={book.id} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(34,197,94,0.1)', borderRadius: '14px', overflow: 'hidden' }}>

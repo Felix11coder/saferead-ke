@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import SecureReader from './SecureReader'
 
-export default function AdminDashboard({ adminDashboardBg }) {
+export default function AdminDashboard({ adminDashboardBg, searchQuery = "" }) {
   const [pendingBooks, setPendingBooks]   = useState([])
   const [approvedBooks, setApprovedBooks] = useState([])
   const [users, setUsers]                 = useState([])
@@ -217,6 +217,12 @@ export default function AdminDashboard({ adminDashboardBg }) {
   const totalViews     = bookViews.reduce((s, b) => s + b.views, 0)
   const totalDonations = donations.reduce((s, d) => s + Number(d.amount), 0)
 
+  // Search filtering
+  const q = searchQuery.trim().toLowerCase()
+  const searchedPending  = q ? pendingBooks.filter(b => b.title?.toLowerCase().includes(q) || b.author_name?.toLowerCase().includes(q) || b.genre?.toLowerCase().includes(q)) : pendingBooks
+  const searchedApproved = q ? filteredApprovedBooks.filter(b => b.title?.toLowerCase().includes(q) || b.author_name?.toLowerCase().includes(q) || b.genre?.toLowerCase().includes(q)) : filteredApprovedBooks
+  const searchedUsers    = q ? users.filter(u => u.email?.toLowerCase().includes(q) || u.author_name?.toLowerCase().includes(q) || u.role?.toLowerCase().includes(q)) : users
+
 
   // ── Render ─────────────────────────────────────────────────────────────
   const navItems = [
@@ -346,8 +352,8 @@ export default function AdminDashboard({ adminDashboardBg }) {
               </div>
               {loading && <p style={{ color: 'rgba(255,255,255,0.55)', fontFamily: 'sans-serif', fontSize: '1rem' }}>Loading…</p>}
               {error && <p style={{ color: '#f87171', fontFamily: 'sans-serif', fontSize: '1rem' }}>Error: {error}</p>}
-              {!loading && !error && pendingBooks.length === 0 && <p style={{ color: 'rgba(255,255,255,0.55)', fontFamily: 'sans-serif' }}>No pending submissions.</p>}
-              {!loading && pendingBooks.length > 0 && (
+              {!loading && !error && searchedPending.length === 0 && <p style={{ color: 'rgba(255,255,255,0.55)', fontFamily: 'sans-serif' }}>{q ? `No results for "${searchQuery}"` : 'No pending submissions.'}</p>}
+              {!loading && searchedPending.length > 0 && (
                 <div style={{ overflowX: 'auto', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem', fontFamily: 'sans-serif' }}>
                     <thead>
@@ -356,7 +362,7 @@ export default function AdminDashboard({ adminDashboardBg }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {pendingBooks.map((book, i) => (
+                      {searchedPending.map((book, i) => (
                         <tr key={book.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: i % 2 === 0 ? 'rgba(255,255,255,0.01)' : 'transparent' }}>
                           <td style={{ padding: '0.875rem 1rem', color: 'rgba(255,255,255,0.95)', fontWeight: 600, fontFamily: 'Georgia, serif' }}>{book.title}</td>
                           <td style={{ padding: '0.875rem 1rem', color: 'rgba(255,255,255,0.7)' }}>{book.genre || 'Other'}</td>
@@ -397,9 +403,9 @@ export default function AdminDashboard({ adminDashboardBg }) {
               {loading && <p style={{ color: 'rgba(255,255,255,0.55)', fontFamily: 'sans-serif', fontSize: '1rem' }}>Loading…</p>}
               {error && <p style={{ color: '#f87171', fontFamily: 'sans-serif', fontSize: '1rem' }}>Error: {error}</p>}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '1.25rem' }}>
-                {!loading && !error && filteredApprovedBooks.length === 0 ? (
-                  <p style={{ color: 'rgba(255,255,255,0.55)', gridColumn: '1/-1', fontFamily: 'sans-serif', fontSize: '1rem' }}>No books in {selectedGenre}.</p>
-                ) : filteredApprovedBooks.map(book => {
+                {!loading && !error && searchedApproved.length === 0 ? (
+                  <p style={{ color: 'rgba(255,255,255,0.55)', gridColumn: '1/-1', fontFamily: 'sans-serif', fontSize: '1rem' }}>{q ? `No results for "${searchQuery}"` : `No books in ${selectedGenre}.`}</p>
+                ) : searchedApproved.map(book => {
                   const coverUrl = book.cover_path ? supabase.storage.from('books').getPublicUrl(book.cover_path).data.publicUrl : 'https://placehold.co/300x450?text=No+Cover'
                   return (
                     <div key={book.id} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px', overflow: 'hidden' }}>
@@ -460,7 +466,7 @@ export default function AdminDashboard({ adminDashboardBg }) {
                 <h2 style={{ fontSize: '1.75rem', color: 'rgba(255,255,255,0.85)' }}>Registered Users</h2>
               </div>
               {loading && <p style={{ color: 'rgba(255,255,255,0.55)', fontFamily: 'sans-serif', fontSize: '1rem' }}>Loading…</p>}
-              {!loading && users.length > 0 && (
+              {!loading && searchedUsers.length > 0 && (
                 <div style={{ overflowX: 'auto', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem', fontFamily: 'sans-serif' }}>
                     <thead>
@@ -469,7 +475,7 @@ export default function AdminDashboard({ adminDashboardBg }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {users.map((user, i) => (
+                      {searchedUsers.map((user, i) => (
                         <tr key={user.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: i % 2 === 0 ? 'rgba(255,255,255,0.01)' : 'transparent' }}>
                           <td style={{ padding: '0.875rem 1rem', color: 'rgba(255,255,255,0.85)' }}>{user.email}</td>
                           <td style={{ padding: '0.875rem 1rem', color: 'rgba(255,255,255,0.7)' }}>{user.author_name || '—'}</td>

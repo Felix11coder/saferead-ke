@@ -106,7 +106,7 @@ function DonateModal({ book, readerEmail, onClose }) {
   )
 }
 
-export default function ReaderDashboard({ user, readerTab, setReaderTab, selectedGenre, setSelectedGenre, genres, filteredBooks, openReader, readerDashboardBg, isSidebarOpen, setIsSidebarOpen }) {
+export default function ReaderDashboard({ user, readerTab, setReaderTab, selectedGenre, setSelectedGenre, genres, filteredBooks, openReader, readerDashboardBg, isSidebarOpen, setIsSidebarOpen, searchQuery = "" }) {
   const [donatingBook, setDonatingBook] = useState(null)
   const [payingBook, setPayingBook] = useState(null)
   const [readerEmail, setReaderEmail] = useState('')
@@ -122,6 +122,16 @@ export default function ReaderDashboard({ user, readerTab, setReaderTab, selecte
   }, [user])
 
   const hasPurchased = (bookId) => purchases.includes(bookId)
+
+  // Search filtering
+  const q = searchQuery.trim().toLowerCase()
+  const searchedBooks = q
+    ? filteredBooks.filter(b =>
+        b.title?.toLowerCase().includes(q) ||
+        b.author_name?.toLowerCase().includes(q) ||
+        b.genre?.toLowerCase().includes(q)
+      )
+    : filteredBooks
   const handleReadNow = (book) => { if (book.is_paid && !hasPurchased(book.id)) { setPayingBook(book) } else { openReader(book) } }
 
   const handlePurchase = async () => {
@@ -259,11 +269,11 @@ export default function ReaderDashboard({ user, readerTab, setReaderTab, selecte
 
               <h2 style={{ fontSize: '1.75rem', fontFamily: 'Georgia, serif', color: '#d4af37', marginBottom: '1.5rem', fontStyle: 'italic' }}>{selectedGenre}</h2>
 
-              {filteredBooks.length === 0 ? (
-                <p style={{ color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '4rem', fontSize: '0.95rem' }}>No books in {selectedGenre} yet.</p>
+              {searchedBooks.length === 0 ? (
+                <p style={{ color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '4rem', fontSize: '0.95rem' }}>{q ? `No results for "${searchQuery}"` : `No books in ${selectedGenre} yet.`}</p>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '1.5rem' }}>
-                  {filteredBooks.map(book => {
+                  {searchedBooks.map(book => {
                     const coverUrl = book.cover_path ? supabase.storage.from('books').getPublicUrl(book.cover_path).data.publicUrl : 'https://placehold.co/300x450?text=No+Cover'
                     const isPaid = book.is_paid && !hasPurchased(book.id)
                     return (
