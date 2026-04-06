@@ -59,6 +59,34 @@ function App() {
     return () => subscription.unsubscribe()
   }, [])
 
+
+  // ── Auto logout after 24 hours of inactivity ──────────────────────────
+  useEffect(() => {
+    if (!user) return
+
+    const TIMEOUT = 24 * 60 * 60 * 1000  // 24 hours in ms
+    let timer
+
+    const resetTimer = () => {
+      clearTimeout(timer)
+      timer = setTimeout(async () => {
+        await supabase.auth.signOut()
+        setUser(null)
+        setUserRole(null)
+        alert('You have been logged out due to inactivity.')
+      }, TIMEOUT)
+    }
+
+    const events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart']
+    events.forEach(e => window.addEventListener(e, resetTimer))
+    resetTimer()
+
+    return () => {
+      clearTimeout(timer)
+      events.forEach(e => window.removeEventListener(e, resetTimer))
+    }
+  }, [user])
+
   const fetchUserRole = async (userId) => {
     const { data } = await supabase
       .from('users')
