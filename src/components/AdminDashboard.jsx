@@ -14,7 +14,11 @@ export default function AdminDashboard({ adminDashboardBg }) {
   const [approvingId, setApprovingId]     = useState(null)
   const [rejectingId, setRejectingId]     = useState(null)
   const [updatingRole, setUpdatingRole]   = useState(null)
+  const [togglingPaid, setTogglingPaid]   = useState(null)
+  const [editingPrice, setEditingPrice]   = useState(null)  // bookId being edited
+  const [priceInput, setPriceInput]       = useState('')
   const [adminTab, setAdminTab]           = useState('home')
+  const [adminMobileOpen, setAdminMobileOpen] = useState(false)
   const [selectedGenre, setSelectedGenre] = useState('Sci-Fi')
   const [selectedBookForReading, setSelectedBookForReading] = useState(null)
 
@@ -44,7 +48,7 @@ export default function AdminDashboard({ adminDashboardBg }) {
     try {
       const { data, error } = await supabase
         .from('books')
-        .select('id, title, genre, author_id, author_name, file_path, cover_path, status, created_at')
+        .select('id, title, genre, author_id, author_name, file_path, cover_path, status, created_at, is_paid, price')
         .eq('status', 'approved')
         .order('created_at', { ascending: false })
       if (error) throw error
@@ -143,8 +147,56 @@ export default function AdminDashboard({ adminDashboardBg }) {
     finally { setUpdatingRole(null) }
   }
 
-  const openReader  = (book) => setSelectedBookForReading(book)
-  const closeReader = ()     => setSelectedBookForReading(null)
+  const togglePaidStatus = async (bookId, currentIsPaid, currentPrice) => {
+    setTogglingPaid(bookId)
+    const newIsPaid = !currentIsPaid
+    try {
+      const { error } = await supabase
+        .from('books')
+        .update({ is_paid: newIsPaid, price: newIsPaid ? (currentPrice || 0) : 0 })
+        .eq('id', bookId)
+      if (error) throw error
+      setApprovedBooks(prev => prev.map(b =>
+        b.id === bookId ? { ...b, is_paid: newIsPaid } : b
+      ))
+    } catch (err) { alert('Failed to update: ' + err.message) }
+    finally { setTogglingPaid(null) }
+  }
+
+  const savePrice = async (bookId) => {
+    const price = Number(priceInput)
+    if (!price || price < 1) { alert('Please enter a valid price.'); return }
+    try {
+      const { error } = await supabase
+        .from('books')
+        .update({ price })
+        .eq('id', bookId)
+      if (error) throw error
+      setApprovedBooks(prev => prev.map(b => b.id === bookId ? { ...b, price } : b))
+      setEditingPrice(null)
+      setPriceInput('')
+    } catch (err) { alert('Failed to save price: ' + err.message) }
+  }
+  const openReader = (book) => setSelectedBookForReading(book)
+  const closeReader = () => setSelectedBookForReading(null)
+
+  const deleteUser = async (userId, userEmail) => {
+    if (!window.confirm(`Delete user ${userEmail}? This cannot be undone.`)) return
+    try {
+      const { error } = await supabase.from('users').delete().eq('id', userId)
+      if (error) throw error
+      setUsers(prev => prev.filter(u => u.id !== userId))
+    } catch (err) { alert('Delete failed: ' + err.message) }
+  }
+
+  const deleteBook = async (bookId, bookTitle) => {
+    if (!window.confirm(`Delete "${bookTitle}"? This cannot be undone.`)) return
+    try {
+      const { error } = await supabase.from('books').delete().eq('id', bookId)
+      if (error) throw error
+      setApprovedBooks(prev => prev.filter(b => b.id !== bookId))
+    } catch (err) { alert('Delete failed: ' + err.message) }
+  }
 
   const filteredApprovedBooks = approvedBooks.filter(b => b.genre === selectedGenre)
   const authorLabel = (book) => book.author_name || (book.author_id ? book.author_id.substring(0, 8) + '…' : 'Unknown')
@@ -154,103 +206,158 @@ export default function AdminDashboard({ adminDashboardBg }) {
   const totalViews     = bookViews.reduce((s, b) => s + b.views, 0)
   const totalDonations = donations.reduce((s, d) => s + Number(d.amount), 0)
 
-  // ── Render ───────────────────────────────────────────────────────────────
-  return (
-    <div
-      className="w-full min-h-screen bg-no-repeat bg-cover bg-center relative text-white"
-      style={{
-        backgroundImage: `url(${adminDashboardBg})`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        backgroundRepeat: 'no-repeat',
-        minHeight: '100vh',
-      }}
-    >
-      <div className="absolute inset-0 bg-black/60" />
 
-      <div className="relative z-10 min-h-screen flex flex-col md:flex-row">
+  // ── Render ─────────────────────────────────────────────────────────────
+  const navItems = [
+    { key: 'home',    label: 'Overview',  icon: '◈' },
+    { key: 'pending', label: 'Pending',   icon: '◉' },
+    { key: 'genres',  label: 'Catalogue', icon: '▦' },
+    { key: 'users',   label: 'Members',   icon: '◎' },
+    { key: 'views',   label: 'Analytics', icon: '▲' },
+  ]
+
+  return (
+    <div style={{ minHeight: '100vh', background: '#0a0b0d', fontFamily: "'Georgia', serif", position: 'relative' }}>
+      {/* Atmospheric bg */}
+      <div style={{ position: 'fixed', inset: 0, backgroundImage: `url(${adminDashboardBg})`, backgroundSize: 'cover', backgroundPosition: 'center', opacity: 0.08, pointerEvents: 'none' }} />
+      <div style={{ position: 'fixed', inset: 0, background: 'radial-gradient(ellipse at 70% 80%, rgba(99,102,241,0.06) 0%, transparent 55%)', pointerEvents: 'none' }} />
+      <style>{`
+        .admin-sidebar-toggle { display: none; }
+        .admin-sidebar { display: flex; }
+        @media (max-width: 640px) {
+          .admin-sidebar-toggle { display: flex !important; }
+          .admin-sidebar {
+            position: fixed !important;
+            left: 0; top: 0;
+            height: 100vh;
+            z-index: 40;
+            transform: translateX(-100%);
+            transition: transform 0.25s ease;
+            width: 220px !important;
+          }
+          .admin-sidebar.open { transform: translateX(0) !important; }
+          .admin-main { padding: 3.5rem 0.875rem 1rem !important; }
+        }
+      `}</style>
+
+      <div style={{ position: 'relative', zIndex: 10, minHeight: '100vh', display: 'flex' }}>
+
+        {/* Mobile sidebar backdrop — only rendered when open */}
+        {adminMobileOpen && (
+          <div
+            onClick={() => setAdminMobileOpen(false)}
+            style={{ display: 'block', position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 35 }}
+          />
+        )}
+
+        {/* Mobile hamburger — only visible when sidebar is CLOSED */}
+        {!adminMobileOpen && (
+          <button
+            className="admin-sidebar-toggle"
+            onClick={() => setAdminMobileOpen(true)}
+            style={{
+              alignItems: 'center', justifyContent: 'center',
+              position: 'fixed', top: '4rem', left: '0.75rem', zIndex: 50,
+              background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)',
+              borderRadius: '10px', padding: '0.55rem 0.7rem', color: 'white',
+              cursor: 'pointer', fontSize: '1.1rem', backdropFilter: 'blur(10px)',
+              lineHeight: 1
+            }}>
+            ☰
+          </button>
+        )}
 
         {/* Sidebar */}
-        <nav className="bg-white/10 backdrop-blur-xl border-b md:border-r border-white/10 md:w-72 md:min-h-screen p-5 flex md:flex-col gap-3">
-          {[
-            { key: 'home',    label: '🏠 Home'          },
-            { key: 'pending', label: '⏳ Pending List'   },
-            { key: 'genres',  label: '📚 Genres'         },
-            { key: 'users',   label: '👥 Users'          },
-            { key: 'views',   label: '📊 Analytics'      },
-          ].map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setAdminTab(key)}
-              className={`w-full text-left px-5 py-3.5 rounded-xl font-medium transition-all ${
-                adminTab === key ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-200 hover:bg-white/10'
-              }`}
-            >
-              {label}
+        <nav
+          className={`admin-sidebar${adminMobileOpen ? ' open' : ''}`}
+          style={{ width: '200px', minHeight: '100vh', background: 'rgba(10,11,13,0.98)', borderRight: '1px solid rgba(255,255,255,0.06)', padding: '2rem 1rem', flexDirection: 'column', gap: '0.35rem', flexShrink: 0 }}>
+
+          {/* Close button — inside sidebar at the top */}
+          <div className="admin-sidebar-toggle" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
+            <button onClick={() => setAdminMobileOpen(false)} style={{
+              background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
+              borderRadius: '8px', padding: '0.4rem 0.65rem', color: 'rgba(255,255,255,0.7)',
+              cursor: 'pointer', fontSize: '1rem', lineHeight: 1
+            }}>✕</button>
+          </div>
+
+          <div style={{ marginBottom: '2rem', paddingBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '0.4rem', fontFamily: 'sans-serif' }}>SafeRead KE</p>
+            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem', fontFamily: 'sans-serif' }}>Admin Console</p>
+          </div>
+          {navItems.map(({ key, label, icon }) => (
+            <button key={key} onClick={() => { setAdminTab(key); setAdminMobileOpen(false) }} style={{
+              padding: '0.65rem 0.875rem', borderRadius: '8px', border: 'none', textAlign: 'left', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: '0.65rem', fontSize: '0.95rem', fontFamily: 'Georgia, serif',
+              background: adminTab === key ? 'rgba(255,255,255,0.07)' : 'transparent',
+              color: adminTab === key ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)',
+              borderLeft: adminTab === key ? '2px solid rgba(255,255,255,0.4)' : '2px solid transparent', transition: 'all 0.15s'
+            }}>
+              <span style={{ fontSize: '0.9rem', opacity: 0.7 }}>{icon}</span> {label}
             </button>
           ))}
         </nav>
 
         {/* Main */}
-        <main className="flex-1 p-4 sm:p-6 md:p-8">
+        <main className="admin-main" style={{ flex: 1, padding: '2.5rem', color: 'white', overflowY: 'auto', minWidth: 0 }}>
 
-          {/* ── HOME ── */}
+          {/* HOME */}
           {adminTab === 'home' && (
-            <div className="text-center py-12 md:py-20">
-              <h2 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-                Admin Dashboard
-              </h2>
-              <p className="text-lg md:text-xl text-gray-300 max-w-3xl mx-auto">
-                Welcome! Review pending books, explore approved titles by genre, manage users, or check platform analytics.
+            <div style={{ paddingTop: '3rem' }}>
+              <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.2em', fontFamily: 'sans-serif', marginBottom: '0.75rem' }}>Admin Console</p>
+              <h2 style={{ fontSize: '3rem', fontWeight: 700, lineHeight: 1.1, marginBottom: '1.5rem', color: 'rgba(255,255,255,0.9)', letterSpacing: '-1px' }}>SafeRead KE</h2>
+              <p style={{ color: 'rgba(255,255,255,0.65)', fontSize: '1rem', maxWidth: '480px', lineHeight: 1.8, fontFamily: 'sans-serif' }}>
+                Review submissions, manage the catalogue, oversee members, and track platform performance.
               </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem', marginTop: '3rem', maxWidth: '600px' }}>
+                {[
+                  { label: 'Pending Review', action: () => setAdminTab('pending') },
+                  { label: 'View Catalogue', action: () => setAdminTab('genres') },
+                  { label: 'Manage Members', action: () => setAdminTab('users') },
+                  { label: 'Analytics', action: () => setAdminTab('views') },
+                ].map(({ label, action }) => (
+                  <button key={label} onClick={action} style={{ padding: '1rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)', color: 'white', fontWeight: 600, fontFamily: 'Georgia, serif', fontSize: '0.95rem', cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; e.currentTarget.style.color = 'rgba(255,255,255,0.6)' }}>
+                    {label} →
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
-          {/* ── PENDING ── */}
+          {/* PENDING */}
           {adminTab === 'pending' && (
             <div>
-              <h2 className="text-3xl font-bold mb-6">Pending Approvals</h2>
-              {loading && <p className="text-gray-300 text-center py-8">Loading…</p>}
-              {error   && <p className="text-red-400 text-center py-8">Error: {error}</p>}
-              {!loading && !error && pendingBooks.length === 0 && (
-                <p className="text-gray-300 text-center py-8">No pending books to approve.</p>
-              )}
+              <div style={{ marginBottom: '2rem' }}>
+                <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.2em', fontFamily: 'sans-serif', marginBottom: '0.5rem' }}>Review Queue</p>
+                <h2 style={{ fontSize: '1.75rem', color: 'rgba(255,255,255,0.85)' }}>Pending Approvals</h2>
+              </div>
+              {loading && <p style={{ color: 'rgba(255,255,255,0.55)', fontFamily: 'sans-serif', fontSize: '1rem' }}>Loading…</p>}
+              {error && <p style={{ color: '#f87171', fontFamily: 'sans-serif', fontSize: '1rem' }}>Error: {error}</p>}
+              {!loading && !error && pendingBooks.length === 0 && <p style={{ color: 'rgba(255,255,255,0.55)', fontFamily: 'sans-serif' }}>No pending submissions.</p>}
               {!loading && pendingBooks.length > 0 && (
-                <div className="overflow-x-auto bg-white/10 backdrop-blur-md rounded-2xl border border-white/10">
-                  <table className="min-w-full">
+                <div style={{ overflowX: 'auto', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem', fontFamily: 'sans-serif' }}>
                     <thead>
-                      <tr className="border-b border-white/10 text-white/60 text-sm uppercase tracking-wider">
-                        <th className="px-6 py-4 text-left">Title</th>
-                        <th className="px-6 py-4 text-left hidden sm:table-cell">Genre</th>
-                        <th className="px-6 py-4 text-left hidden md:table-cell">Author</th>
-                        <th className="px-6 py-4 text-left hidden md:table-cell">Uploaded</th>
-                        <th className="px-6 py-4 text-center">Actions</th>
+                      <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                        {['Title', 'Genre', 'Author', 'Date', 'Actions'].map(h => <th key={h} style={{ padding: '0.875rem 1rem', textAlign: 'left', color: 'rgba(255,255,255,0.55)', fontWeight: 500, textTransform: 'uppercase', fontSize: '0.78rem', letterSpacing: '0.1em' }}>{h}</th>)}
                       </tr>
                     </thead>
                     <tbody>
-                      {pendingBooks.map(book => (
-                        <tr key={book.id} className="border-b border-white/10 hover:bg-white/5 transition">
-                          <td className="px-6 py-4 font-medium">{book.title}</td>
-                          <td className="px-6 py-4 hidden sm:table-cell text-gray-300">{book.genre || 'Other'}</td>
-                          <td className="px-6 py-4 hidden md:table-cell text-gray-300">{authorLabel(book)}</td>
-                          <td className="px-6 py-4 hidden md:table-cell text-gray-300">
-                            {book.created_at ? fmtDate(book.created_at) : '—'}
-                          </td>
-                          <td className="px-6 py-4 text-center">
-                            <div className="flex justify-center gap-2">
-                              <button
-                                onClick={() => approveBook(book.id)}
-                                disabled={approvingId === book.id || rejectingId === book.id}
-                                className="px-4 py-2 rounded-xl text-sm font-medium transition bg-green-600 hover:bg-green-700 disabled:opacity-50"
-                              >
-                                {approvingId === book.id ? 'Approving…' : '✓ Approve'}
+                      {pendingBooks.map((book, i) => (
+                        <tr key={book.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: i % 2 === 0 ? 'rgba(255,255,255,0.01)' : 'transparent' }}>
+                          <td style={{ padding: '0.875rem 1rem', color: 'rgba(255,255,255,0.95)', fontWeight: 600, fontFamily: 'Georgia, serif' }}>{book.title}</td>
+                          <td style={{ padding: '0.875rem 1rem', color: 'rgba(255,255,255,0.7)' }}>{book.genre || 'Other'}</td>
+                          <td style={{ padding: '0.875rem 1rem', color: 'rgba(255,255,255,0.7)' }}>{authorLabel(book)}</td>
+                          <td style={{ padding: '0.875rem 1rem', color: 'rgba(255,255,255,0.85)' }}>{book.created_at ? fmtDate(book.created_at) : '—'}</td>
+                          <td style={{ padding: '0.875rem 1rem' }}>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                              <button onClick={() => approveBook(book.id)} disabled={approvingId === book.id} style={{ padding: '0.4rem 0.875rem', borderRadius: '6px', border: '1px solid rgba(34,197,94,0.3)', background: 'rgba(34,197,94,0.08)', color: '#22c55e', fontSize: '0.9rem', cursor: 'pointer', fontFamily: 'sans-serif' }}>
+                                {approvingId === book.id ? '…' : 'Approve'}
                               </button>
-                              <button
-                                onClick={() => rejectBook(book.id)}
-                                disabled={approvingId === book.id || rejectingId === book.id}
-                                className="px-4 py-2 rounded-xl text-sm font-medium transition bg-red-600 hover:bg-red-700 disabled:opacity-50"
-                              >
-                                {rejectingId === book.id ? 'Rejecting…' : '✕ Reject'}
+                              <button onClick={() => rejectBook(book.id)} disabled={rejectingId === book.id} style={{ padding: '0.4rem 0.875rem', borderRadius: '6px', border: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.06)', color: '#f87171', fontSize: '0.9rem', cursor: 'pointer', fontFamily: 'sans-serif' }}>
+                                {rejectingId === book.id ? '…' : 'Reject'}
                               </button>
                             </div>
                           </td>
@@ -260,99 +367,100 @@ export default function AdminDashboard({ adminDashboardBg }) {
                   </table>
                 </div>
               )}
-              <button onClick={fetchPendingBooks} className="mt-6 bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-xl font-medium transition">
-                Refresh List
-              </button>
+              <button onClick={fetchPendingBooks} style={{ marginTop: '1.5rem', padding: '0.6rem 1.5rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: 'rgba(255,255,255,0.75)', fontSize: '0.95rem', cursor: 'pointer', fontFamily: 'sans-serif' }}>Refresh</button>
             </div>
           )}
 
-          {/* ── GENRES ── */}
+          {/* GENRES */}
           {adminTab === 'genres' && (
             <div>
-              <h2 className="text-3xl font-bold mb-6">Approved Books by Genre</h2>
-              <div className="flex flex-wrap gap-3 mb-8 overflow-x-auto pb-2">
+              <div style={{ marginBottom: '2rem' }}>
+                <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.2em', fontFamily: 'sans-serif', marginBottom: '0.5rem' }}>Catalogue</p>
+                <h2 style={{ fontSize: '1.75rem', color: 'rgba(255,255,255,0.85)' }}>Approved Books</h2>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '1.5rem' }}>
                 {genres.map(g => (
-                  <button
-                    key={g}
-                    onClick={() => setSelectedGenre(g)}
-                    className={`px-6 py-3 rounded-2xl font-medium transition-all ${
-                      selectedGenre === g ? 'bg-blue-600 text-white shadow-lg scale-105' : 'bg-white/10 hover:bg-white/20 text-white'
-                    }`}
-                  >
-                    {g}
-                  </button>
+                  <button key={g} onClick={() => setSelectedGenre(g)} style={{ padding: '0.3rem 0.75rem', borderRadius: '50px', border: selectedGenre === g ? '1px solid rgba(255,255,255,0.4)' : '1px solid rgba(255,255,255,0.08)', background: selectedGenre === g ? 'rgba(255,255,255,0.1)' : 'transparent', color: selectedGenre === g ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.3)', fontSize: '0.9rem', cursor: 'pointer', fontFamily: 'sans-serif' }}>{g}</button>
                 ))}
               </div>
-              <h3 className="text-2xl font-bold mb-6">{selectedGenre} Books</h3>
-              {loading && <p className="text-gray-300 text-center py-8">Loading…</p>}
-              {error   && <p className="text-red-400 text-center py-8">Error: {error}</p>}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+              {loading && <p style={{ color: 'rgba(255,255,255,0.55)', fontFamily: 'sans-serif', fontSize: '1rem' }}>Loading…</p>}
+              {error && <p style={{ color: '#f87171', fontFamily: 'sans-serif', fontSize: '1rem' }}>Error: {error}</p>}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '1.25rem' }}>
                 {!loading && !error && filteredApprovedBooks.length === 0 ? (
-                  <p className="col-span-full text-center text-gray-300 py-8">No approved books in {selectedGenre} yet.</p>
-                ) : (
-                  filteredApprovedBooks.map(book => {
-                    const coverUrl = book.cover_path
-                      ? supabase.storage.from('books').getPublicUrl(book.cover_path).data.publicUrl
-                      : 'https://placehold.co/300x450?text=No+Cover'
-                    return (
-                      <div key={book.id} className="bg-white/10 backdrop-blur-md rounded-2xl shadow-xl overflow-hidden hover:shadow-2xl transition border border-white/10">
-                        <img src={coverUrl} alt={book.title} className="w-full h-56 object-cover" />
-                        <div className="p-5">
-                          <h3 className="font-bold text-lg mb-1 line-clamp-2">{book.title}</h3>
-                          <p className="text-sm text-gray-300 mb-4">by {authorLabel(book)}</p>
-                          <button onClick={() => openReader(book)} className="w-full bg-blue-600 hover:bg-blue-700 py-3 rounded-xl transition font-medium">
-                            Read Now
+                  <p style={{ color: 'rgba(255,255,255,0.55)', gridColumn: '1/-1', fontFamily: 'sans-serif', fontSize: '1rem' }}>No books in {selectedGenre}.</p>
+                ) : filteredApprovedBooks.map(book => {
+                  const coverUrl = book.cover_path ? supabase.storage.from('books').getPublicUrl(book.cover_path).data.publicUrl : 'https://placehold.co/300x450?text=No+Cover'
+                  return (
+                    <div key={book.id} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px', overflow: 'hidden' }}>
+                      <img src={coverUrl} alt={book.title} style={{ width: '100%', aspectRatio: '2/3', objectFit: 'cover' }} />
+                      <div style={{ padding: '0.75rem' }}>
+                        <h3 style={{ fontSize: '0.9rem', color: 'rgba(255,255,255,0.75)', marginBottom: '0.2rem', fontFamily: 'Georgia, serif', lineHeight: 1.4 }}>{book.title}</h3>
+                        <p style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.85)', marginBottom: '0.5rem', fontFamily: 'sans-serif' }}>by {authorLabel(book)}</p>
+
+                        {/* Paid toggle */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                          <span style={{ fontSize: '0.78rem', fontFamily: 'sans-serif', color: book.is_paid ? '#fbbf24' : '#22c55e', fontWeight: 600 }}>{book.is_paid ? `KES ${book.price}` : 'FREE'}</span>
+                          <button onClick={() => togglePaidStatus(book.id, book.is_paid, book.price)} disabled={togglingPaid === book.id} style={{ padding: '0.2rem 0.5rem', borderRadius: '5px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.75)', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'sans-serif' }}>
+                            {togglingPaid === book.id ? '…' : book.is_paid ? 'Free' : 'Paid'}
                           </button>
                         </div>
+
+                        {book.is_paid && (
+                          editingPrice === book.id ? (
+                            <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.4rem' }}>
+                              <input type="number" value={priceInput} onChange={e => setPriceInput(e.target.value)} placeholder="KES" style={{ flex: 1, padding: '0.3rem', borderRadius: '5px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: 'white', fontSize: '0.85rem', outline: 'none' }} />
+                              <button onClick={() => savePrice(book.id)} style={{ padding: '0.3rem 0.5rem', borderRadius: '5px', border: 'none', background: '#22c55e', color: '#0a0b0d', fontSize: '0.8rem', cursor: 'pointer' }}>✓</button>
+                              <button onClick={() => { setEditingPrice(null); setPriceInput('') }} style={{ padding: '0.3rem 0.5rem', borderRadius: '5px', border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: 'rgba(255,255,255,0.65)', fontSize: '0.8rem', cursor: 'pointer' }}>✕</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => { setEditingPrice(book.id); setPriceInput(book.price || '') }} style={{ width: '100%', padding: '0.3rem', borderRadius: '5px', border: '1px solid rgba(255,255,255,0.07)', background: 'transparent', color: 'rgba(255,255,255,0.85)', fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'sans-serif', marginBottom: '0.4rem' }}>
+                              ✏ Edit price
+                            </button>
+                          )
+                        )}
+                        <button onClick={() => openReader(book)} style={{ width: '100%', padding: '0.4rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem', cursor: 'pointer', fontFamily: 'sans-serif', marginBottom: '0.4rem' }}>Read</button>
+                        <button onClick={() => deleteBook(book.id, book.title)} style={{ width: '100%', padding: '0.4rem', borderRadius: '6px', border: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.05)', color: '#f87171', fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'sans-serif' }}>Delete Book</button>
                       </div>
-                    )
-                  })
-                )}
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
 
-          {/* ── USERS ── */}
+          {/* USERS */}
           {adminTab === 'users' && (
             <div>
-              <h2 className="text-3xl font-bold mb-6">Registered Users</h2>
-              {loading && <p className="text-gray-300 text-center py-8">Loading…</p>}
-              {error   && <p className="text-red-400 text-center py-8">Error: {error}</p>}
-              {!loading && !error && users.length === 0 && (
-                <p className="text-gray-300 text-center py-8">No users registered yet.</p>
-              )}
+              <div style={{ marginBottom: '2rem' }}>
+                <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.2em', fontFamily: 'sans-serif', marginBottom: '0.5rem' }}>Members</p>
+                <h2 style={{ fontSize: '1.75rem', color: 'rgba(255,255,255,0.85)' }}>Registered Users</h2>
+              </div>
+              {loading && <p style={{ color: 'rgba(255,255,255,0.55)', fontFamily: 'sans-serif', fontSize: '1rem' }}>Loading…</p>}
               {!loading && users.length > 0 && (
-                <div className="overflow-x-auto bg-white/10 backdrop-blur-md rounded-2xl border border-white/10">
-                  <table className="min-w-full">
+                <div style={{ overflowX: 'auto', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem', fontFamily: 'sans-serif' }}>
                     <thead>
-                      <tr className="border-b border-white/10 text-white/60 text-sm uppercase tracking-wider">
-                        <th className="px-6 py-4 text-left">Email</th>
-                        <th className="px-6 py-4 text-left hidden sm:table-cell">Author Name</th>
-                        <th className="px-6 py-4 text-left">Role</th>
-                        <th className="px-6 py-4 text-left hidden md:table-cell">Joined</th>
+                      <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                        {['Email', 'Name', 'Role', 'Joined', 'Action'].map(h => <th key={h} style={{ padding: '0.875rem 1rem', textAlign: 'left', color: 'rgba(255,255,255,0.55)', fontWeight: 500, textTransform: 'uppercase', fontSize: '0.78rem', letterSpacing: '0.1em' }}>{h}</th>)}
                       </tr>
                     </thead>
                     <tbody>
-                      {users.map(user => (
-                        <tr key={user.id} className="border-b border-white/10 hover:bg-white/5 transition">
-                          <td className="px-6 py-4 text-sm">{user.email}</td>
-                          <td className="px-6 py-4 hidden sm:table-cell text-gray-300 text-sm">
-                            {user.author_name || '—'}
-                          </td>
-                          <td className="px-6 py-4">
-                            <select
-                              value={user.role || 'reader'}
-                              onChange={e => updateUserRole(user.id, e.target.value)}
-                              disabled={updatingRole === user.id}
-                              className="bg-white/10 border border-white/20 text-white text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-400 disabled:opacity-50"
-                            >
-                              <option value="reader" className="text-black">Reader</option>
-                              <option value="author" className="text-black">Author</option>
-                              <option value="admin"  className="text-black">Admin</option>
+                      {users.map((user, i) => (
+                        <tr key={user.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: i % 2 === 0 ? 'rgba(255,255,255,0.01)' : 'transparent' }}>
+                          <td style={{ padding: '0.875rem 1rem', color: 'rgba(255,255,255,0.85)' }}>{user.email}</td>
+                          <td style={{ padding: '0.875rem 1rem', color: 'rgba(255,255,255,0.7)' }}>{user.author_name || '—'}</td>
+                          <td style={{ padding: '0.875rem 1rem' }}>
+                            <select value={user.role || 'reader'} onChange={e => updateUserRole(user.id, e.target.value)} disabled={updatingRole === user.id} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.85)', borderRadius: '6px', padding: '0.3rem 0.5rem', fontSize: '0.9rem', cursor: 'pointer', outline: 'none' }}>
+                              <option value="reader" style={{ background: '#0a0b0d' }}>Reader</option>
+                              <option value="author" style={{ background: '#0a0b0d' }}>Author</option>
+                              <option value="admin" style={{ background: '#0a0b0d' }}>Admin</option>
                             </select>
                           </td>
-                          <td className="px-6 py-4 hidden md:table-cell text-gray-300 text-sm">
-                            {user.created_at ? fmtDate(user.created_at) : '—'}
+                          <td style={{ padding: '0.875rem 1rem', color: 'rgba(255,255,255,0.55)' }}>{user.created_at ? fmtDate(user.created_at) : '—'}</td>
+                          <td style={{ padding: '0.875rem 1rem' }}>
+                            <button onClick={() => deleteUser(user.id, user.email)} style={{ padding: '0.3rem 0.75rem', borderRadius: '6px', border: '1px solid rgba(239,68,68,0.25)', background: 'rgba(239,68,68,0.06)', color: '#f87171', fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'sans-serif' }}>
+                              Delete
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -360,124 +468,96 @@ export default function AdminDashboard({ adminDashboardBg }) {
                   </table>
                 </div>
               )}
-              <button onClick={fetchUsers} className="mt-6 bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-xl font-medium transition">
-                Refresh Users
-              </button>
+              <button onClick={fetchUsers} style={{ marginTop: '1.5rem', padding: '0.6rem 1.5rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: 'rgba(255,255,255,0.75)', fontSize: '0.95rem', cursor: 'pointer', fontFamily: 'sans-serif' }}>Refresh</button>
             </div>
           )}
 
-          {/* ── ANALYTICS ── */}
+          {/* ANALYTICS */}
           {adminTab === 'views' && (
             <div>
-              <h2 className="text-3xl font-bold mb-8">Platform Analytics</h2>
-
-              {loading && <p className="text-gray-300 text-center py-8">Loading analytics…</p>}
-              {error   && <p className="text-red-400 text-center py-8">Error: {error}</p>}
-
+              <div style={{ marginBottom: '2rem' }}>
+                <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.2em', fontFamily: 'sans-serif', marginBottom: '0.5rem' }}>Analytics</p>
+                <h2 style={{ fontSize: '1.75rem', color: 'rgba(255,255,255,0.85)' }}>Platform Overview</h2>
+              </div>
+              {loading && <p style={{ color: 'rgba(255,255,255,0.55)', fontFamily: 'sans-serif', fontSize: '1rem' }}>Loading analytics…</p>}
               {!loading && !error && (
-                <div className="space-y-8">
-
-                  {/* Summary cards */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem', marginBottom: '2.5rem' }}>
                     {[
-                      { label: 'Total Books',    value: bookViews.length,               accent: 'text-blue-300'   },
-                      { label: 'Total Page Views', value: totalViews.toLocaleString(),  accent: 'text-purple-300' },
-                      { label: 'Total Users',    value: users.length || '—',            accent: 'text-green-300'  },
-                      { label: 'Platform Donations', value: fmt(totalDonations),        accent: 'text-pink-300'   },
-                    ].map(({ label, value, accent }) => (
-                      <div key={label} className="rounded-2xl p-5 bg-white/10 border border-white/20 backdrop-blur-sm">
-                        <p className={`text-xs font-semibold uppercase tracking-widest mb-1 ${accent}`}>{label}</p>
-                        <p className="text-2xl font-bold text-white">{value}</p>
+                      { label: 'Total Books', value: bookViews.length, color: 'rgba(255,255,255,0.85)' },
+                      { label: 'Page Views', value: totalViews.toLocaleString(), color: 'rgba(255,255,255,0.85)' },
+                      { label: 'Users', value: users.length || '—', color: 'rgba(255,255,255,0.85)' },
+                      { label: 'Donations', value: fmt(totalDonations), color: '#22c55e' },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px', padding: '1.25rem' }}>
+                        <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: 'sans-serif', marginBottom: '0.5rem' }}>{label}</p>
+                        <p style={{ fontSize: '1.75rem', fontWeight: 700, color }}>{value}</p>
                       </div>
                     ))}
                   </div>
 
-                  {/* Book views table */}
-                  <div>
-                    <h3 className="text-xl font-semibold text-white/80 mb-3 border-b border-white/10 pb-2">
-                      Books by Page Views
-                    </h3>
-                    {bookViews.length === 0 ? (
-                      <p className="text-gray-400 text-sm py-4">No page views recorded yet.</p>
-                    ) : (
-                      <div className="overflow-x-auto rounded-xl border border-white/10">
-                        <table className="min-w-full text-sm">
-                          <thead>
-                            <tr className="bg-white/10 text-white/60 text-xs uppercase tracking-wider">
-                              <th className="px-4 py-3 text-left">#</th>
-                              <th className="px-4 py-3 text-left">Title</th>
-                              <th className="px-4 py-3 text-left hidden sm:table-cell">Author</th>
-                              <th className="px-4 py-3 text-right">Views</th>
-                            </tr>
-                          </thead>
+                  {bookViews.length > 0 && (
+                    <div style={{ marginBottom: '2rem' }}>
+                      <h3 style={{ color: 'rgba(255,255,255,0.65)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.15em', fontFamily: 'sans-serif', marginBottom: '1rem', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '0.75rem' }}>Books by Page Views</h3>
+                      <div style={{ overflowX: 'auto', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', fontFamily: 'sans-serif' }}>
+                          <thead><tr style={{ background: 'rgba(255,255,255,0.02)' }}>
+                            {['#', 'Title', 'Author', 'Views'].map(h => <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', color: 'rgba(255,255,255,0.55)', fontWeight: 500, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{h}</th>)}
+                          </tr></thead>
                           <tbody>
                             {bookViews.map((book, i) => (
-                              <tr key={book.id} className={`border-t border-white/10 ${i % 2 === 0 ? 'bg-white/5' : ''} hover:bg-white/10 transition`}>
-                                <td className="px-4 py-3 text-white/40">{i + 1}</td>
-                                <td className="px-4 py-3 text-white font-medium">{book.title}</td>
-                                <td className="px-4 py-3 text-gray-300 hidden sm:table-cell">{book.author_name || '—'}</td>
-                                <td className="px-4 py-3 text-right text-purple-300 font-semibold">{book.views.toLocaleString()}</td>
+                              <tr key={book.id} style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+                                <td style={{ padding: '0.75rem 1rem', color: 'rgba(255,255,255,0.5)' }}>{i + 1}</td>
+                                <td style={{ padding: '0.75rem 1rem', color: 'rgba(255,255,255,0.65)', fontFamily: 'Georgia, serif' }}>{book.title}</td>
+                                <td style={{ padding: '0.75rem 1rem', color: 'rgba(255,255,255,0.65)' }}>{book.author_name || '—'}</td>
+                                <td style={{ padding: '0.75rem 1rem', color: 'rgba(255,255,255,0.85)', fontWeight: 600 }}>{book.views.toLocaleString()}</td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
-                  {/* Platform donations */}
-                  <div>
-                    <h3 className="text-xl font-semibold text-white/80 mb-3 border-b border-white/10 pb-2">
-                      Recent Donations (Platform-wide)
-                    </h3>
-                    {donations.length === 0 ? (
-                      <p className="text-gray-400 text-sm py-4">No donations recorded yet.</p>
-                    ) : (
-                      <div className="overflow-x-auto rounded-xl border border-white/10">
-                        <table className="min-w-full text-sm">
-                          <thead>
-                            <tr className="bg-white/10 text-white/60 text-xs uppercase tracking-wider">
-                              <th className="px-4 py-3 text-left">Amount</th>
-                              <th className="px-4 py-3 text-left">Status</th>
-                              <th className="px-4 py-3 text-left hidden sm:table-cell">Date</th>
-                            </tr>
-                          </thead>
+                  {donations.length > 0 && (
+                    <div>
+                      <h3 style={{ color: 'rgba(255,255,255,0.65)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.15em', fontFamily: 'sans-serif', marginBottom: '1rem', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '0.75rem' }}>Recent Donations</h3>
+                      <div style={{ overflowX: 'auto', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', fontFamily: 'sans-serif' }}>
+                          <thead><tr style={{ background: 'rgba(255,255,255,0.02)' }}>
+                            {['Amount', 'Status', 'Date'].map(h => <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', color: 'rgba(255,255,255,0.55)', fontWeight: 500, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{h}</th>)}
+                          </tr></thead>
                           <tbody>
                             {donations.map((d, i) => (
-                              <tr key={d.id} className={`border-t border-white/10 ${i % 2 === 0 ? 'bg-white/5' : ''} hover:bg-white/10 transition`}>
-                                <td className="px-4 py-3 text-pink-300 font-semibold">{fmt(d.amount)}</td>
-                                <td className="px-4 py-3 text-green-300">{d.status || '—'}</td>
-                                <td className="px-4 py-3 text-gray-300 hidden sm:table-cell">{fmtDate(d.created_at)}</td>
+                              <tr key={d.id} style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+                                <td style={{ padding: '0.75rem 1rem', color: '#22c55e', fontWeight: 600 }}>{fmt(d.amount)}</td>
+                                <td style={{ padding: '0.75rem 1rem', color: 'rgba(255,255,255,0.7)' }}>{d.status || '—'}</td>
+                                <td style={{ padding: '0.75rem 1rem', color: 'rgba(255,255,255,0.85)' }}>{fmtDate(d.created_at)}</td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
-                  <button onClick={fetchBookViews} className="text-sm text-blue-300 hover:text-white transition underline underline-offset-4">
-                    ↻ Refresh analytics
-                  </button>
+                  <button onClick={fetchBookViews} style={{ marginTop: '1.5rem', background: 'none', border: 'none', color: 'rgba(255,255,255,0.55)', fontSize: '0.95rem', cursor: 'pointer', fontFamily: 'sans-serif', textDecoration: 'underline' }}>↻ Refresh analytics</button>
                 </div>
               )}
             </div>
           )}
-
         </main>
       </div>
 
       {/* Reader modal */}
       {selectedBookForReading && (
-        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden">
-            <div className="p-4 border-b flex justify-between items-center bg-gray-900 text-white">
-              <h3 className="font-semibold">Reading: {selectedBookForReading.title}</h3>
-              <button onClick={closeReader} className="bg-gray-700 hover:bg-gray-600 px-5 py-2 rounded-lg transition">
-                Close
-              </button>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+          <div style={{ background: '#0a0b0d', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '16px', maxWidth: '900px', width: '100%', maxHeight: '90vh', overflow: 'hidden' }}>
+            <div style={{ padding: '1rem 1.5rem', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ fontSize: '1rem', color: 'white', fontWeight: 600, fontFamily: 'Georgia, serif' }}>{selectedBookForReading.title}</h3>
+              <button onClick={closeReader} style={{ padding: '0.4rem 1rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: 'rgba(255,255,255,0.75)', cursor: 'pointer', fontFamily: 'sans-serif', fontSize: '0.95rem' }}>Close</button>
             </div>
-            <div className="p-4 overflow-auto max-h-[80vh]">
+            <div style={{ overflow: 'auto', maxHeight: 'calc(90vh - 60px)' }}>
               <SecureReader book={selectedBookForReading} />
             </div>
           </div>

@@ -17,15 +17,15 @@ async function logPageView(book, userId) {
 }
 
 export default function SecureReader({ book, bookPath }) {
-  // Support both old (bookPath) and new (book) call styles
   const resolvedPath = book?.file_path ?? bookPath
 
-  const [pdfDoc, setPdfDoc]   = useState(null)
-  const [pageNum, setPageNum] = useState(1)
+  const [pdfDoc, setPdfDoc]     = useState(null)
+  const [pageNum, setPageNum]   = useState(1)
   const [numPages, setNumPages] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState(null)
-  const canvasRef             = useRef(null)
+  const [loading, setLoading]   = useState(true)
+  const [error, setError]       = useState(null)
+  const canvasRef               = useRef(null)
+  const containerRef            = useRef(null)
 
   const [userEmail, setUserEmail] = useState('Reader')
   const [userId, setUserId]       = useState(null)
@@ -84,8 +84,6 @@ export default function SecureReader({ book, bookPath }) {
         setLoading(false)
 
         renderPage(1, pdf)
-
-        // Log page 1 view on open
         logPageView(book, userId)
 
       } catch (err) {
@@ -98,32 +96,52 @@ export default function SecureReader({ book, bookPath }) {
     return () => { if (pdfDoc) pdfDoc.destroy() }
   }, [resolvedPath])
 
+  // Re-render current page when window resizes
+  useEffect(() => {
+    const handleResize = () => {
+      if (pdfDoc) renderPage(pageNum, pdfDoc)
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [pdfDoc, pageNum])
+
   const renderPage = async (num, pdf = pdfDoc) => {
     if (!pdf) return
     try {
-      const page     = await pdf.getPage(num)
-      const viewport = page.getViewport({ scale: 1.5 })
-      const canvas   = canvasRef.current
+      const page = await pdf.getPage(num)
+
+      // Use full window width — accounts for any outer padding/modal wrappers
+      const availableWidth = window.innerWidth
+      const unscaledVp     = page.getViewport({ scale: 1 })
+      const scale          = availableWidth / unscaledVp.width
+      const viewport       = page.getViewport({ scale })
+
+      const canvas = canvasRef.current
       if (!canvas) return
 
-      canvas.height = viewport.height
-      canvas.width  = viewport.width
+      // Use devicePixelRatio for sharp rendering on retina/mobile screens
+      const dpr        = window.devicePixelRatio || 1
+      canvas.width     = viewport.width  * dpr
+      canvas.height    = viewport.height * dpr
+      canvas.style.width  = viewport.width  + 'px'
+      canvas.style.height = viewport.height + 'px'
 
-      await page.render({
-        canvasContext: canvas.getContext('2d'),
-        viewport,
-      }).promise
-
-      // Watermark
       const ctx = canvas.getContext('2d')
+      ctx.scale(dpr, dpr)
+
+      await page.render({ canvasContext: ctx, viewport }).promise
+
+      // Watermark — scale font to canvas size
+      const fontSize = Math.max(12, Math.round(viewport.width * 0.035))
       ctx.save()
-      ctx.globalAlpha  = 0.35
-      ctx.font         = 'italic bold 28px Arial'
+      ctx.globalAlpha  = 0.3
+      ctx.font         = `italic bold ${fontSize}px Arial`
       ctx.fillStyle    = '#555555'
       ctx.textAlign    = 'right'
       ctx.textBaseline = 'bottom'
-      ctx.fillText(`SafeRead KE • ${userEmail}`, canvas.width - 30, canvas.height - 20)
+      ctx.fillText(`SafeRead KE • ${userEmail}`, viewport.width - 16, viewport.height - 12)
       ctx.restore()
+
     } catch (err) {
       console.error('Render error:', err)
     }
@@ -134,39 +152,85 @@ export default function SecureReader({ book, bookPath }) {
     setPageNum(num)
     renderPage(num)
     logPageView(book, userId)
+    // Scroll canvas back to top on page turn
+    canvasRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  if (loading) return <p className="text-center text-gray-600 py-8">Loading secure reader…</p>
-  if (error)   return <p className="text-center text-red-600 font-bold py-8">{error}</p>
+  // ── Loading / error states ────────────────────────────────────────────────
+  if (loading) return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '3rem 1rem', gap: '1rem' }}>
+      <div style={{ width: '36px', height: '36px', border: '3px solid rgba(0,0,0,0.1)', borderTop: '3px solid #555', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+      <p style={{ color: '#666', fontSize: '0.95rem' }}>Loading secure reader…</p>
+    </div>
+  )
 
+  if (error) return (
+    <div style={{ padding: '2rem 1rem', textAlign: 'center' }}>
+      <p style={{ color: '#dc2626', fontWeight: 600 }}>{error}</p>
+    </div>
+  )
+
+  // ── Main reader UI ────────────────────────────────────────────────────────
   return (
-    <div className="max-w-4xl mx-auto p-8">
-      <h2 className="text-2xl font-bold mb-4">Secure Reader – Page {pageNum} of {numPages}</h2>
-      <div className="border border-gray-300 shadow-lg">
-        <canvas ref={canvasRef} className="mx-auto" />
+    <div style={{ background: '#e5e7eb', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+
+      {/* Top bar */}
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 10,
+        background: 'white', borderBottom: '1px solid #e5e7eb',
+        padding: '0.625rem 1rem',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        gap: '0.5rem', flexShrink: 0
+      }}>
+        <p style={{ fontSize: '0.85rem', fontWeight: 600, color: '#374151', margin: 0, flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {book?.title ?? 'Secure Reader'}
+        </p>
+        <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: 0, whiteSpace: 'nowrap' }}>
+          Page {pageNum} / {numPages}
+        </p>
       </div>
-      <div className="mt-4 flex justify-center gap-4">
-        <button
-          onClick={() => goToPage(pageNum - 1)}
-          disabled={pageNum <= 1}
-          className="bg-blue-500 text-white px-4 py-2 rounded disabled:bg-gray-400"
-        >
-          Previous
+
+      {/* Canvas — fills all available vertical space */}
+      <div
+        ref={containerRef}
+        style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', overflow: 'auto' }}
+      >
+        <canvas
+          ref={canvasRef}
+          style={{ display: 'block', maxWidth: '100%' }}
+        />
+      </div>
+
+      {/* Navigation bar — pinned to bottom */}
+      <div style={{
+        position: 'sticky', bottom: 0, zIndex: 10,
+        background: 'white', borderTop: '1px solid #e5e7eb',
+        padding: '0.625rem 0.75rem',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+        flexShrink: 0
+      }}>
+        <button onClick={() => goToPage(1)} disabled={pageNum <= 1}
+          style={{ padding: '0.5rem 0.6rem', borderRadius: '8px', border: '1px solid #d1d5db', background: pageNum <= 1 ? '#f9fafb' : 'white', color: pageNum <= 1 ? '#9ca3af' : '#374151', fontSize: '0.8rem', cursor: pageNum <= 1 ? 'not-allowed' : 'pointer' }}>
+          ««
         </button>
-        <span className="flex items-center text-gray-600 text-sm">
-          Page {pageNum} of {numPages}
+        <button onClick={() => goToPage(pageNum - 1)} disabled={pageNum <= 1}
+          style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid #d1d5db', background: pageNum <= 1 ? '#f9fafb' : 'white', color: pageNum <= 1 ? '#9ca3af' : '#374151', fontSize: '0.875rem', cursor: pageNum <= 1 ? 'not-allowed' : 'pointer', fontWeight: 500 }}>
+          ‹ Prev
+        </button>
+        <span style={{ padding: '0.5rem 0.75rem', background: '#f3f4f6', borderRadius: '8px', fontSize: '0.8rem', color: '#6b7280', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          {pageNum} / {numPages}
         </span>
-        <button
-          onClick={() => goToPage(pageNum + 1)}
-          disabled={pageNum >= numPages}
-          className="bg-blue-500 text-white px-4 py-2 rounded disabled:bg-gray-400"
-        >
-          Next
+        <button onClick={() => goToPage(pageNum + 1)} disabled={pageNum >= numPages}
+          style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid #d1d5db', background: pageNum >= numPages ? '#f9fafb' : 'white', color: pageNum >= numPages ? '#9ca3af' : '#374151', fontSize: '0.875rem', cursor: pageNum >= numPages ? 'not-allowed' : 'pointer', fontWeight: 500 }}>
+          Next ›
+        </button>
+        <button onClick={() => goToPage(numPages)} disabled={pageNum >= numPages}
+          style={{ padding: '0.5rem 0.6rem', borderRadius: '8px', border: '1px solid #d1d5db', background: pageNum >= numPages ? '#f9fafb' : 'white', color: pageNum >= numPages ? '#9ca3af' : '#374151', fontSize: '0.8rem', cursor: pageNum >= numPages ? 'not-allowed' : 'pointer' }}>
+          »»
         </button>
       </div>
-      <p className="text-center mt-4 text-sm text-gray-600">
-        Content protected – no download/print/screenshot allowed
-      </p>
+
     </div>
   )
 }

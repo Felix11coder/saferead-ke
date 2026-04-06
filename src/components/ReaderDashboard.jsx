@@ -1,17 +1,15 @@
 // src/components/ReaderDashboard.jsx
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 
 const PAYSTACK_PUBLIC_KEY = 'pk_test_dd44a501f23959e357cb807c2cd0dca4840a8a90'
 const PRESET_AMOUNTS = [50, 100, 200, 500]
 
-// ─── Load Paystack script and resolve when ready ──────────────────────────────
 function loadPaystack() {
   return new Promise((resolve, reject) => {
     if (window.PaystackPop) return resolve(window.PaystackPop)
     const existing = document.getElementById('paystack-script')
     if (existing) {
-      // Script tag exists but may still be loading — poll
       const poll = setInterval(() => {
         if (window.PaystackPop) { clearInterval(poll); resolve(window.PaystackPop) }
       }, 100)
@@ -19,347 +17,307 @@ function loadPaystack() {
       return
     }
     const script = document.createElement('script')
-    script.id  = 'paystack-script'
+    script.id = 'paystack-script'
     script.src = 'https://js.paystack.co/v1/inline.js'
-    script.onload = () => {
-      if (window.PaystackPop) resolve(window.PaystackPop)
-      else reject(new Error('PaystackPop not found after load'))
-    }
-    script.onerror = () => reject(new Error('Failed to load Paystack script'))
+    script.onload = () => window.PaystackPop ? resolve(window.PaystackPop) : reject(new Error('PaystackPop not found'))
+    script.onerror = () => reject(new Error('Failed to load Paystack'))
     document.body.appendChild(script)
   })
 }
 
-// ─── Donate modal ─────────────────────────────────────────────────────────────
 function DonateModal({ book, readerEmail, onClose }) {
   const [selected, setSelected] = useState(null)
-  const [custom, setCustom]     = useState('')
-  const [paying, setPaying]     = useState(false)
-  const [success, setSuccess]   = useState(false)
-  const [error, setError]       = useState('')
-
+  const [custom, setCustom] = useState('')
+  const [paying, setPaying] = useState(false)
+  const [success, setSuccess] = useState(false)
+  const [error, setError] = useState('')
   const effectiveAmount = custom !== '' ? Number(custom) : selected
 
   const handlePay = async () => {
     setError('')
-
-    if (!effectiveAmount || effectiveAmount < 10) {
-      setError('Minimum donation is KES 10.')
-      return
-    }
-
-    // Ensure we have a valid email — Paystack requires it
-    const email = readerEmail || 'donor@safereadke.com'
-
+    if (!effectiveAmount || effectiveAmount < 10) { setError('Minimum donation is KES 10.'); return }
     setPaying(true)
-
     try {
       const PaystackPop = await loadPaystack()
-
       const handler = PaystackPop.setup({
-        key:      PAYSTACK_PUBLIC_KEY,
-        email,
-        amount:   effectiveAmount * 100,   // in kobo
-        currency: 'KES',
-        ref:      'SAFEREAD_' + Date.now(),
-        metadata: {
-          custom_fields: [
-            { display_name: 'Book',   variable_name: 'book_title', value: book.title },
-            { display_name: 'Author', variable_name: 'author_id',  value: book.author_id },
-          ]
-        },
+        key: PAYSTACK_PUBLIC_KEY, email: readerEmail || 'donor@safereadke.com',
+        amount: effectiveAmount * 100, currency: 'KES', ref: 'SAFEREAD_' + Date.now(),
+        metadata: { custom_fields: [{ display_name: 'Book', variable_name: 'book_title', value: book.title }] },
         callback: (response) => {
-          // Paystack v1 requires a plain (non-async) callback
-          // Fire-and-forget the Supabase insert
-          supabase.from('donations').insert({
-            book_id:     book.id,
-            author_id:   book.author_id,
-            amount:    effectiveAmount,
-            status:    'completed',
-          }).then(({ error }) => {
-            if (error) console.warn('Donation log failed:', error.message)
-          })
-          setPaying(false)
-          setSuccess(true)
+          supabase.from('donations').insert({ book_id: book.id, author_id: book.author_id, amount: effectiveAmount, status: 'completed' })
+            .then(({ error }) => { if (error) console.warn('Donation log failed:', error.message) })
+          setPaying(false); setSuccess(true)
         },
-        onClose: () => {
-          setPaying(false)
-        },
+        onClose: () => setPaying(false),
       })
-
       handler.openIframe()
-
-    } catch (err) {
-      setPaying(false)
-      setError('Could not connect to Paystack: ' + err.message)
-    }
+    } catch (err) { setPaying(false); setError('Could not connect to Paystack: ' + err.message) }
   }
 
-  // ── Success ────────────────────────────────────────────────────────────
-  if (success) {
-    return (
-      <div className="fixed inset-0 bg-black/70 z-[200] flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl">
-          <div className="text-5xl mb-4">🎉</div>
-          <h3 className="text-xl font-bold text-gray-800 mb-2">Thank you!</h3>
-          <p className="text-gray-600 mb-6">
-            Your donation of <strong>KES {effectiveAmount}</strong> to{' '}
-            <strong>{book.author_name || 'the author'}</strong> was successful.
-          </p>
-          <button
-            onClick={onClose}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-medium transition"
-          >
-            Back to Books
-          </button>
-        </div>
-      </div>
-    )
-  }
+  const overlayStyle = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }
+  const modalStyle = { background: '#1a1208', border: '1px solid rgba(212,175,55,0.3)', borderRadius: '20px', padding: '2rem', maxWidth: '380px', width: '100%', color: 'white' }
 
-  // ── Form ───────────────────────────────────────────────────────────────
-  return (
-    <div className="fixed inset-0 bg-black/70 z-[200] flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-sm w-full shadow-2xl">
-
-        <div className="flex justify-between items-start mb-5">
-          <div>
-            <h3 className="text-lg font-bold text-gray-800">Support the Author</h3>
-            <p className="text-sm text-gray-500 mt-0.5">
-              {book.author_name || 'Unknown Author'} · <em>{book.title}</em>
-            </p>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none ml-4">
-            ×
-          </button>
-        </div>
-
-        <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">
-          Choose an amount (KES)
+  if (success) return (
+    <div style={overlayStyle}>
+      <div style={{ ...modalStyle, textAlign: 'center' }}>
+        <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🎉</div>
+        <h3 style={{ fontSize: '1.25rem', fontWeight: 700, fontFamily: 'Georgia, serif', marginBottom: '0.5rem' }}>Thank you!</h3>
+        <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '1rem', marginBottom: '1.5rem' }}>
+          Your donation of <strong style={{ color: '#d4af37' }}>KES {effectiveAmount}</strong> to <strong>{book.author_name || 'the author'}</strong> was successful.
         </p>
-        <div className="grid grid-cols-4 gap-2 mb-4">
+        <button onClick={onClose} style={{ width: '100%', padding: '0.75rem', borderRadius: '12px', border: 'none', background: 'linear-gradient(135deg, #d4af37, #b8860b)', color: '#1a1208', fontWeight: 700, cursor: 'pointer' }}>Back to Books</button>
+      </div>
+    </div>
+  )
+
+  return (
+    <div style={overlayStyle}>
+      <div style={modalStyle}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
+          <div>
+            <h3 style={{ fontFamily: 'Georgia, serif', fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.25rem' }}>Support the Author</h3>
+            <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: '0.95rem' }}>{book.author_name || 'Unknown'} · <em>{book.title}</em></p>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', fontSize: '1.5rem', cursor: 'pointer', lineHeight: 1 }}>×</button>
+        </div>
+        <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '0.75rem' }}>Choose an amount (KES)</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', marginBottom: '1rem' }}>
           {PRESET_AMOUNTS.map(amt => (
-            <button
-              key={amt}
-              onClick={() => { setSelected(amt); setCustom('') }}
-              className={`py-2.5 rounded-xl text-sm font-semibold border-2 transition ${
-                selected === amt && custom === ''
-                  ? 'border-blue-600 bg-blue-600 text-white'
-                  : 'border-gray-200 text-gray-700 hover:border-blue-400'
-              }`}
-            >
-              {amt}
-            </button>
+            <button key={amt} onClick={() => { setSelected(amt); setCustom('') }} style={{
+              padding: '0.6rem', borderRadius: '10px', border: selected === amt && custom === '' ? '2px solid #d4af37' : '1px solid rgba(255,255,255,0.15)',
+              background: selected === amt && custom === '' ? 'rgba(212,175,55,0.2)' : 'rgba(255,255,255,0.05)',
+              color: selected === amt && custom === '' ? '#d4af37' : 'white', fontWeight: 600, fontSize: '1rem', cursor: 'pointer'
+            }}>{amt}</button>
           ))}
         </div>
-
-        <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">
-          Or enter a custom amount
-        </p>
-        <div className="flex items-center border-2 border-gray-200 rounded-xl overflow-hidden mb-5 focus-within:border-blue-500 transition">
-          <span className="px-3 text-gray-500 font-medium bg-gray-50 py-3">KES</span>
-          <input
-            type="number"
-            min="10"
-            placeholder="e.g. 250"
-            value={custom}
-            onChange={e => { setCustom(e.target.value); setSelected(null) }}
-            className="flex-1 px-3 py-3 text-gray-800 focus:outline-none"
-          />
+        <div style={{ display: 'flex', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '10px', overflow: 'hidden', marginBottom: '1rem' }}>
+          <span style={{ padding: '0.75rem', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)', fontSize: '1rem', borderRight: '1px solid rgba(255,255,255,0.1)' }}>KES</span>
+          <input type="number" min="10" placeholder="Custom amount" value={custom} onChange={e => { setCustom(e.target.value); setSelected(null) }}
+            style={{ flex: 1, padding: '0.75rem', background: 'transparent', border: 'none', color: 'white', fontSize: '1rem', outline: 'none' }} />
         </div>
-
-        {effectiveAmount > 0 && (
-          <div className="bg-blue-50 rounded-xl px-4 py-3 mb-4 text-sm text-blue-700 font-medium">
-            Donating <strong>KES {effectiveAmount}</strong> to {book.author_name || 'this author'}
-          </div>
-        )}
-
-        {error && <p className="text-red-500 text-sm mb-3">⚠️ {error}</p>}
-
-        <button
-          onClick={handlePay}
-          disabled={paying || !effectiveAmount}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white py-3 rounded-xl font-semibold transition"
-        >
+        {effectiveAmount > 0 && <div style={{ background: 'rgba(212,175,55,0.1)', border: '1px solid rgba(212,175,55,0.2)', borderRadius: '10px', padding: '0.75rem', marginBottom: '1rem', fontSize: '1rem', color: '#d4af37' }}>Donating KES {effectiveAmount} to {book.author_name || 'this author'}</div>}
+        {error && <p style={{ color: '#f87171', fontSize: '1rem', marginBottom: '0.75rem' }}>⚠️ {error}</p>}
+        <button onClick={handlePay} disabled={paying || !effectiveAmount} style={{ width: '100%', padding: '0.875rem', borderRadius: '12px', border: 'none', background: paying || !effectiveAmount ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, #d4af37, #b8860b)', color: paying || !effectiveAmount ? 'rgba(255,255,255,0.3)' : '#1a1208', fontWeight: 700, fontSize: '0.95rem', cursor: paying || !effectiveAmount ? 'not-allowed' : 'pointer', marginBottom: '0.75rem' }}>
           {paying ? 'Opening Paystack…' : `Donate KES ${effectiveAmount || '—'}`}
         </button>
-
-        <p className="text-center text-xs text-gray-400 mt-3">
-          Secured by Paystack · M-Pesa, cards &amp; bank transfer accepted
-        </p>
+        <p style={{ textAlign: 'center', fontSize: '0.9rem', color: 'rgba(255,255,255,0.3)' }}>Secured by Paystack · M-Pesa, cards & bank transfer</p>
       </div>
     </div>
   )
 }
 
-// ─── Main ReaderDashboard ─────────────────────────────────────────────────────
-export default function ReaderDashboard({
-  readerTab,
-  setReaderTab,
-  selectedGenre,
-  setSelectedGenre,
-  genres,
-  filteredBooks,
-  openReader,
-  readerDashboardBg,
-  isSidebarOpen,
-  setIsSidebarOpen
-}) {
+export default function ReaderDashboard({ user, readerTab, setReaderTab, selectedGenre, setSelectedGenre, genres, filteredBooks, openReader, readerDashboardBg, isSidebarOpen, setIsSidebarOpen }) {
   const [donatingBook, setDonatingBook] = useState(null)
-  const [readerEmail, setReaderEmail]   = useState('')
+  const [payingBook, setPayingBook] = useState(null)
+  const [readerEmail, setReaderEmail] = useState('')
+  const [purchases, setPurchases] = useState([])
+  const [purchasePaying, setPurchasePaying] = useState(false)
+  const [purchaseError, setPurchaseError] = useState('')
 
-  // Preload Paystack script immediately on mount
   useEffect(() => { loadPaystack().catch(() => {}) }, [])
-
-  // Get reader email
+  useEffect(() => { supabase.auth.getUser().then(({ data }) => { if (data?.user?.email) setReaderEmail(data.user.email) }) }, [])
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      if (data?.user?.email) setReaderEmail(data.user.email)
-    })
-  }, [])
+    if (!user?.id) return
+    supabase.from('book_purchases').select('book_id').eq('reader_id', user.id).then(({ data }) => { if (data) setPurchases(data.map(p => p.book_id)) })
+  }, [user])
 
+  const hasPurchased = (bookId) => purchases.includes(bookId)
+  const handleReadNow = (book) => { if (book.is_paid && !hasPurchased(book.id)) { setPayingBook(book) } else { openReader(book) } }
+
+  const handlePurchase = async () => {
+    setPurchaseError('')
+    if (!payingBook) return
+    setPurchasePaying(true)
+    try {
+      const PaystackPop = await loadPaystack()
+      const handler = PaystackPop.setup({
+        key: PAYSTACK_PUBLIC_KEY, email: readerEmail || 'reader@safereadke.com',
+        amount: payingBook.price * 100, currency: 'KES', ref: 'PURCHASE_' + Date.now(),
+        callback: (response) => {
+          supabase.from('book_purchases').insert({ book_id: payingBook.id, reader_id: user.id, amount_paid: payingBook.price, payment_ref: response.reference })
+            .then(() => { setPurchases(prev => [...prev, payingBook.id]); setPurchasePaying(false); const book = payingBook; setPayingBook(null); openReader(book) })
+        },
+        onClose: () => setPurchasePaying(false),
+      })
+      handler.openIframe()
+    } catch (err) { setPurchasePaying(false); setPurchaseError('Could not connect to Paystack: ' + err.message) }
+  }
+
+  // ── Amber/gold literary theme ──────────────────────────────────────────
   return (
-    <div
-      className="w-full min-h-screen bg-no-repeat bg-cover bg-center relative"
-      style={{
-        backgroundImage: `url(${readerDashboardBg})`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        backgroundRepeat: 'no-repeat',
-        minHeight: '100vh',
-      }}
-    >
-      <div className="absolute inset-0 bg-black/50" />
+    <div style={{ minHeight: '100vh', background: '#0d0a04', fontFamily: "'Georgia', serif", position: 'relative' }}>
+      {/* Atmospheric background */}
+      <div style={{ position: 'fixed', inset: 0, backgroundImage: `url(${readerDashboardBg})`, backgroundSize: 'cover', backgroundPosition: 'center', opacity: 0.15, pointerEvents: 'none' }} />
+      <div style={{ position: 'fixed', inset: 0, background: 'radial-gradient(ellipse at 20% 50%, rgba(212,175,55,0.08) 0%, transparent 60%), radial-gradient(ellipse at 80% 20%, rgba(180,120,20,0.06) 0%, transparent 50%)', pointerEvents: 'none' }} />
+      <style>{`
+        .reader-sidebar-toggle { display: none; }
+        .reader-sidebar { display: flex; }
+        @media (max-width: 640px) {
+          .reader-sidebar-toggle { display: flex !important; }
+          .reader-sidebar {
+            position: fixed !important;
+            left: 0; top: 0;
+            height: 100vh;
+            z-index: 40;
+            transform: translateX(-100%);
+            transition: transform 0.25s ease;
+            width: 220px !important;
+          }
+          .reader-sidebar.open { transform: translateX(0) !important; }
+          .reader-main { padding: 3.5rem 0.875rem 1rem !important; }
+          .reader-overlay { display: block !important; }
+        }
+      `}</style>
 
-      <div className="relative z-10 min-h-screen flex flex-col md:flex-row">
+      <div style={{ position: 'relative', zIndex: 10, minHeight: '100vh', display: 'flex' }}>
 
-        <button
-          className="md:hidden fixed top-4 left-4 z-50 bg-white/90 p-3 rounded-lg shadow-lg backdrop-blur-sm"
-          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-        >
-          {isSidebarOpen ? '✕' : '☰'}
-        </button>
-
+        {/* Mobile sidebar backdrop — only rendered when open */}
         {isSidebarOpen && (
-          <div className="md:hidden fixed inset-0 bg-black/50 z-40" onClick={() => setIsSidebarOpen(false)} />
+          <div
+            onClick={() => setIsSidebarOpen(false)}
+            style={{ display: 'block', position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 35 }}
+          />
         )}
 
-        <nav className={`
-          bg-white/85 border-b md:border-r md:border-gray-200
-          w-64 min-h-screen p-5 md:p-6 flex md:flex-col gap-3 md:gap-4 backdrop-blur-md
-          fixed md:static inset-y-0 left-0 transform transition-transform duration-300 ease-in-out z-50
-          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0
-          overflow-y-auto
-        `}>
-          {[
-            { key: 'home',   label: 'Home'  },
-            { key: 'genres', label: 'Genre' },
-          ].map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => { setReaderTab(key); setIsSidebarOpen(false) }}
-              className={`px-5 py-3 rounded-lg font-medium text-left transition-all text-sm md:text-base ${
-                readerTab === key
-                  ? 'bg-blue-100 text-blue-700 border-l-4 border-blue-600'
-                  : 'text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              {label}
+        {/* Mobile hamburger — only visible when sidebar is CLOSED */}
+        {!isSidebarOpen && (
+          <button
+            className="reader-sidebar-toggle"
+            onClick={() => setIsSidebarOpen(true)}
+            style={{
+              alignItems: 'center', justifyContent: 'center',
+              position: 'fixed', top: '4rem', left: '0.75rem', zIndex: 50,
+              background: 'rgba(212,175,55,0.15)', border: '1px solid rgba(212,175,55,0.35)',
+              borderRadius: '10px', padding: '0.55rem 0.7rem', color: '#d4af37',
+              cursor: 'pointer', fontSize: '1.1rem', backdropFilter: 'blur(10px)',
+              lineHeight: 1
+            }}>
+            ☰
+          </button>
+        )}
+
+        {/* Sidebar */}
+        <nav
+          className={`reader-sidebar${isSidebarOpen ? ' open' : ''}`}
+          style={{
+          width: '220px', minHeight: '100vh', background: 'rgba(26,18,8,0.98)', borderRight: '1px solid rgba(212,175,55,0.15)',
+          padding: '2rem 1.25rem', flexDirection: 'column', gap: '0.5rem', backdropFilter: 'blur(20px)', flexShrink: 0
+        }}>
+
+          {/* Close button — inside sidebar at the top */}
+          <div className="reader-sidebar-toggle" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
+            <button onClick={() => setIsSidebarOpen(false)} style={{
+              background: 'rgba(212,175,55,0.08)', border: '1px solid rgba(212,175,55,0.2)',
+              borderRadius: '8px', padding: '0.4rem 0.65rem', color: '#d4af37',
+              cursor: 'pointer', fontSize: '1rem', lineHeight: 1
+            }}>✕</button>
+          </div>
+
+          <div style={{ marginBottom: '2rem', paddingBottom: '1.5rem', borderBottom: '1px solid rgba(212,175,55,0.15)' }}>
+            <p style={{ color: '#d4af37', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: '0.5rem' }}>SafeRead KE</p>
+            <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.9rem' }}>Reader</p>
+          </div>
+          {[{ key: 'home', label: 'Home', icon: '⌂' }, { key: 'genres', label: 'Browse', icon: '◈' }].map(({ key, label, icon }) => (
+            <button key={key} onClick={() => { setReaderTab(key); setIsSidebarOpen(false) }} style={{
+              padding: '0.75rem 1rem', borderRadius: '10px', border: 'none', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '1rem', fontFamily: 'Georgia, serif', fontWeight: 600, transition: 'all 0.2s',
+              background: readerTab === key ? 'rgba(212,175,55,0.15)' : 'transparent',
+              color: readerTab === key ? '#d4af37' : 'rgba(255,255,255,0.5)',
+              borderLeft: readerTab === key ? '2px solid #d4af37' : '2px solid transparent'
+            }}>
+              <span style={{ fontSize: '1rem' }}>{icon}</span> {label}
             </button>
           ))}
         </nav>
 
-        <main className="flex-1 p-4 sm:p-6 md:p-8">
-
+        {/* Main */}
+        <main className="reader-main" style={{ flex: 1, padding: '2.5rem', color: 'white', overflowY: 'auto', minWidth: 0 }}>
           {readerTab === 'home' && (
-            <div className="text-center py-8 sm:py-12">
-              <h2 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-6 text-white">Home</h2>
-              <p className="text-base sm:text-lg text-gray-200 max-w-2xl mx-auto">
-                Welcome! Browse genres to find books, then support your favourite authors with a donation.
+            <div style={{ textAlign: 'center', paddingTop: '4rem' }}>
+              <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📚</div>
+              <h2 style={{ fontSize: '2.5rem', fontWeight: 700, fontFamily: 'Georgia, serif', color: '#d4af37', marginBottom: '1rem', letterSpacing: '-0.5px' }}>Welcome, Reader</h2>
+              <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: '1.05rem', maxWidth: '500px', margin: '0 auto 2rem', lineHeight: 1.7 }}>
+                Discover Kenyan stories. Browse genres, find your next read, and support the authors who bring them to life.
               </p>
+              <button onClick={() => setReaderTab('genres')} style={{ padding: '0.875rem 2.5rem', borderRadius: '50px', border: '1px solid rgba(212,175,55,0.4)', background: 'rgba(212,175,55,0.1)', color: '#d4af37', fontFamily: 'Georgia, serif', fontSize: '0.95rem', cursor: 'pointer', letterSpacing: '0.05em' }}>
+                Browse Books →
+              </button>
             </div>
           )}
 
           {readerTab === 'genres' && (
             <div>
-              <div className="flex flex-wrap gap-2 sm:gap-3 mb-6 sm:mb-8 overflow-x-auto pb-2">
+              {/* Genre pills */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '2rem' }}>
                 {genres.map(g => (
-                  <button
-                    key={g}
-                    onClick={() => setSelectedGenre(g)}
-                    className={`px-4 py-2 sm:px-5 sm:py-3 rounded-full text-sm sm:text-base font-medium transition-all whitespace-nowrap ${
-                      selectedGenre === g
-                        ? 'bg-blue-600 text-white shadow-md scale-105'
-                        : 'bg-white/90 text-blue-600 hover:bg-blue-200 hover:shadow backdrop-blur-sm'
-                    }`}
-                  >
-                    {g}
-                  </button>
+                  <button key={g} onClick={() => setSelectedGenre(g)} style={{
+                    padding: '0.4rem 1rem', borderRadius: '50px', border: selectedGenre === g ? '1px solid #d4af37' : '1px solid rgba(255,255,255,0.15)',
+                    background: selectedGenre === g ? 'rgba(212,175,55,0.15)' : 'rgba(255,255,255,0.04)',
+                    color: selectedGenre === g ? '#d4af37' : 'rgba(255,255,255,0.5)', fontSize: '0.95rem', cursor: 'pointer', fontFamily: 'Georgia, serif', fontWeight: 600, transition: 'all 0.2s'
+                  }}>{g}</button>
                 ))}
               </div>
 
-              <h2 className="text-2xl sm:text-3xl font-bold mb-6 sm:mb-8 text-center text-white">
-                {selectedGenre} Books
-              </h2>
+              <h2 style={{ fontSize: '1.75rem', fontFamily: 'Georgia, serif', color: '#d4af37', marginBottom: '1.5rem', fontStyle: 'italic' }}>{selectedGenre}</h2>
 
-              <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6">
-                {filteredBooks.length === 0 ? (
-                  <p className="col-span-full text-center text-base sm:text-lg text-gray-200 py-12">
-                    No books in {selectedGenre} yet.
-                  </p>
-                ) : (
-                  filteredBooks.map(book => {
-                    const coverUrl = book.cover_path
-                      ? supabase.storage.from('books').getPublicUrl(book.cover_path).data.publicUrl
-                      : 'https://placehold.co/200x300?text=No+Cover'
-
+              {filteredBooks.length === 0 ? (
+                <p style={{ color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '4rem', fontSize: '0.95rem' }}>No books in {selectedGenre} yet.</p>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '1.5rem' }}>
+                  {filteredBooks.map(book => {
+                    const coverUrl = book.cover_path ? supabase.storage.from('books').getPublicUrl(book.cover_path).data.publicUrl : 'https://placehold.co/300x450?text=No+Cover'
+                    const isPaid = book.is_paid && !hasPurchased(book.id)
                     return (
-                      <div
-                        key={book.id}
-                        className="bg-white/90 rounded-xl shadow-md overflow-hidden hover:shadow-xl transition backdrop-blur-sm flex flex-col"
-                      >
-                        <img
-                          src={coverUrl}
-                          alt={book.title}
-                          className="w-full h-44 xs:h-48 sm:h-52 md:h-60 lg:h-64 object-cover"
-                        />
-                        <div className="p-3 sm:p-4 flex flex-col flex-1">
-                          <h3 className="font-bold text-base sm:text-lg mb-1 line-clamp-2 text-gray-800">
-                            {book.title}
-                          </h3>
-                          <p className="text-xs sm:text-sm text-gray-500 mb-3 flex-1">
-                            by {book.author_name || 'Unknown Author'}
-                          </p>
-                          <button
-                            onClick={() => openReader(book)}
-                            className="bg-blue-500 text-white py-2 px-4 rounded-lg hover:bg-blue-600 transition text-sm font-medium mb-2"
-                          >
-                            Read Now
+                      <div key={book.id} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(212,175,55,0.1)', borderRadius: '16px', overflow: 'hidden', transition: 'all 0.3s', cursor: 'pointer' }}
+                        onMouseEnter={e => { e.currentTarget.style.border = '1px solid rgba(212,175,55,0.3)'; e.currentTarget.style.background = 'rgba(212,175,55,0.05)' }}
+                        onMouseLeave={e => { e.currentTarget.style.border = '1px solid rgba(212,175,55,0.1)'; e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}>
+                        <div style={{ position: 'relative' }}>
+                          <img src={coverUrl} alt={book.title} style={{ width: '100%', aspectRatio: '2/3', objectFit: 'cover', display: 'block' }} />
+                          {book.is_paid && (
+                            <div style={{ position: 'absolute', top: '0.5rem', right: '0.5rem', background: hasPurchased(book.id) ? 'rgba(34,197,94,0.9)' : 'rgba(212,175,55,0.9)', color: '#1a1208', fontSize: '0.8rem', fontWeight: 700, padding: '0.2rem 0.5rem', borderRadius: '6px', fontFamily: 'sans-serif' }}>
+                              {hasPurchased(book.id) ? '✓ OWNED' : `KES ${book.price}`}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ padding: '0.875rem' }}>
+                          <h3 style={{ fontSize: '1rem', fontFamily: 'Georgia, serif', color: 'rgba(255,255,255,0.9)', marginBottom: '0.25rem', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{book.title}</h3>
+                          <p style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.65)', marginBottom: '0.75rem', fontFamily: 'sans-serif' }}>by {book.author_name || 'Unknown'}</p>
+                          <button onClick={() => handleReadNow(book)} style={{ width: '100%', padding: '0.5rem', borderRadius: '8px', border: 'none', background: isPaid ? 'rgba(212,175,55,0.15)' : 'rgba(212,175,55,0.9)', color: isPaid ? '#d4af37' : '#1a1208', fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer', marginBottom: '0.4rem', fontFamily: 'sans-serif', border: isPaid ? '1px solid rgba(212,175,55,0.4)' : 'none' }}>
+                            {isPaid ? `Buy · KES ${book.price}` : 'Read Now'}
                           </button>
-                          <button
-                            onClick={() => setDonatingBook(book)}
-                            className="bg-white text-blue-600 border-2 border-blue-500 py-2 px-4 rounded-lg hover:bg-blue-50 transition text-sm font-medium"
-                          >
-                            ❤️ Support Author
+                          <button onClick={() => setDonatingBook(book)} style={{ width: '100%', padding: '0.4rem', borderRadius: '8px', border: '1px solid rgba(212,175,55,0.2)', background: 'transparent', color: 'rgba(212,175,55,0.6)', fontSize: '0.85rem', cursor: 'pointer', fontFamily: 'sans-serif' }}>
+                            ♥ Support Author
                           </button>
                         </div>
                       </div>
                     )
-                  })
-                )}
-              </div>
+                  })}
+                </div>
+              )}
             </div>
           )}
         </main>
       </div>
 
-      {donatingBook && (
-        <DonateModal
-          book={donatingBook}
-          readerEmail={readerEmail}
-          onClose={() => setDonatingBook(null)}
-        />
+      {/* Purchase modal */}
+      {payingBook && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+          <div style={{ background: '#1a1208', border: '1px solid rgba(212,175,55,0.3)', borderRadius: '20px', padding: '2rem', maxWidth: '360px', width: '100%', color: 'white' }}>
+            <h3 style={{ fontFamily: 'Georgia, serif', fontSize: '1.25rem', marginBottom: '0.5rem' }}>Purchase Book</h3>
+            <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: '0.95rem', marginBottom: '1.5rem' }}>{payingBook.title} · by {payingBook.author_name}</p>
+            <div style={{ textAlign: 'center', marginBottom: '1.5rem', padding: '1.5rem', background: 'rgba(212,175,55,0.08)', borderRadius: '12px', border: '1px solid rgba(212,175,55,0.15)' }}>
+              <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: '0.95rem', marginBottom: '0.5rem' }}>One-time · Unlimited access</p>
+              <p style={{ fontSize: '2rem', fontWeight: 700, color: '#d4af37' }}>KES {payingBook.price}</p>
+            </div>
+            {purchaseError && <p style={{ color: '#f87171', fontSize: '0.95rem', marginBottom: '0.75rem' }}>⚠️ {purchaseError}</p>}
+            <button onClick={handlePurchase} disabled={purchasePaying} style={{ width: '100%', padding: '0.875rem', borderRadius: '12px', border: 'none', background: 'linear-gradient(135deg, #d4af37, #b8860b)', color: '#1a1208', fontWeight: 700, cursor: purchasePaying ? 'not-allowed' : 'pointer', marginBottom: '0.75rem' }}>
+              {purchasePaying ? 'Opening Paystack…' : `Pay KES ${payingBook.price} & Read`}
+            </button>
+            <button onClick={() => setPayingBook(null)} style={{ width: '100%', padding: '0.75rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', fontSize: '1rem' }}>Cancel</button>
+          </div>
+        </div>
       )}
+
+      {donatingBook && <DonateModal book={donatingBook} readerEmail={readerEmail} onClose={() => setDonatingBook(null)} />}
     </div>
   )
 }
