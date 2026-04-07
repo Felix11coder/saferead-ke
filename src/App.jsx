@@ -6,6 +6,7 @@ import AdminDashboard from './components/AdminDashboard'
 import SecureReader from './components/SecureReader'
 import AuthorDashboard from './components/AuthorDashboard'
 import ReaderDashboard from './components/ReaderDashboard'
+import AIAssistant from './components/AIAssistant'
 
 import readerDashboardBg from './assets/readerdashboard.jpg'
 import authorDashboardBg from './assets/authordashboard.jpg'
@@ -73,7 +74,7 @@ function App() {
   const fetchBooks = async () => {
     const { data, error } = await supabase
       .from('books')
-      .select('id, title, genre, author_id, author_name, file_path, cover_path, status, created_at, is_paid, price')
+      .select('id, title, genre, author_id, author_name, description, file_path, cover_path, status, created_at, is_paid, price')
       .eq('status', 'approved')
     if (error) {
       console.error('Fetch books error:', error)
@@ -587,6 +588,8 @@ function App() {
           </div>
         </div>
       )}
+      {/* AI Assistant — floats on all dashboards */}
+      {userRole && <AIAssistant userRole={userRole} />}
     </div>
   )
 }

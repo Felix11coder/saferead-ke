@@ -290,7 +290,8 @@ export default function ReaderDashboard({ user, readerTab, setReaderTab, selecte
                         </div>
                         <div style={{ padding: '0.875rem' }}>
                           <h3 style={{ fontSize: '1rem', fontFamily: 'Georgia, serif', color: 'rgba(255,255,255,0.9)', marginBottom: '0.25rem', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{book.title}</h3>
-                          <p style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.65)', marginBottom: '0.75rem', fontFamily: 'sans-serif' }}>by {book.author_name || 'Unknown'}</p>
+                          <p style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.65)', marginBottom: '0.4rem', fontFamily: 'sans-serif' }}>by {book.author_name || 'Unknown'}</p>
+                          {book.description && <p style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.45)', marginBottom: '0.6rem', fontFamily: 'sans-serif', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{book.description}</p>}
                           <button onClick={() => handleReadNow(book)} style={{ width: '100%', padding: '0.5rem', borderRadius: '8px', border: 'none', background: isPaid ? 'rgba(212,175,55,0.15)' : 'rgba(212,175,55,0.9)', color: isPaid ? '#d4af37' : '#1a1208', fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer', marginBottom: '0.4rem', fontFamily: 'sans-serif', border: isPaid ? '1px solid rgba(212,175,55,0.4)' : 'none' }}>
                             {isPaid ? `Buy · KES ${book.price}` : 'Read Now'}
                           </button>

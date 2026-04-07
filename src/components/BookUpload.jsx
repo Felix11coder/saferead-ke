@@ -18,9 +18,11 @@ export default function BookUpload({ user }) {
   const [progress, setProgress]   = useState('')
   const [success, setSuccess]     = useState(false)
   const [error, setError]         = useState('')
+  const [description, setDescription] = useState('')
 
   // Fetched automatically from users table — not typed manually
   const [authorName, setAuthorName] = useState('')
+  const [mpesaPhone, setMpesaPhone]   = useState('')
   const [nameLoading, setNameLoading] = useState(true)
 
   // ── Auto-fetch author name from users table ──────────────────────────
@@ -28,11 +30,12 @@ export default function BookUpload({ user }) {
     if (!user?.id) return
     supabase
       .from('users')
-      .select('author_name')
+      .select('author_name, mpesa_phone')
       .eq('id', user.id)
       .single()
       .then(({ data }) => {
         setAuthorName(data?.author_name || '')
+        setMpesaPhone(data?.mpesa_phone || '')
         setNameLoading(false)
       })
   }, [user])
@@ -53,6 +56,7 @@ export default function BookUpload({ user }) {
   const reset = () => {
     setTitle('')
     setGenre('')
+    setDescription('')
     setCoverFile(null)
     setBookFile(null)
     setCoverPreview(null)
@@ -65,7 +69,8 @@ export default function BookUpload({ user }) {
     setError('')
     setSuccess(false)
 
-    if (!title.trim())  return setError('Please enter a book title.')
+    if (!title.trim())       return setError('Please enter a book title.')
+    if (!description.trim()) return setError('Please enter a book description.')
     if (!genre)         return setError('Please select a genre.')
     if (!bookFile)      return setError('Please select a PDF file to upload.')
     if (bookFile.type !== 'application/pdf')
@@ -96,10 +101,16 @@ export default function BookUpload({ user }) {
         .from('books').upload(filePath, bookFile, { upsert: false })
       if (fileErr) throw new Error('PDF upload failed: ' + fileErr.message)
 
+      // 2b. Save M-Pesa phone to users table if provided
+      if (mpesaPhone.trim()) {
+        await supabase.from('users').update({ mpesa_phone: '254' + mpesaPhone.trim() }).eq('id', uid)
+      }
+
       // 3. Insert book record with author_name from users table
       setProgress('Saving book details…')
       const { error: dbErr } = await supabase.from('books').insert({
         title:       title.trim(),
+        description: description.trim(),
         author_name: authorName || null,
         genre,
         author_id:   uid,
@@ -160,6 +171,25 @@ export default function BookUpload({ user }) {
         )}
       </div>
 
+      {/* M-Pesa Payout Number */}
+      <div className="mb-5">
+        <label className="block text-sm font-semibold text-white/80 mb-2 uppercase tracking-wider">
+          M-Pesa Payout Number
+        </label>
+        <div className="flex gap-2 items-center">
+          <span className="px-3 py-3 rounded-xl bg-white/10 text-white/60 text-sm border border-white/10 shrink-0">+254</span>
+          <input
+            type="tel"
+            value={mpesaPhone}
+            onChange={e => setMpesaPhone(e.target.value.replace(/\D/g, '').slice(0,9))}
+            placeholder="7XXXXXXXX"
+            disabled={uploading}
+            className="flex-1 px-4 py-3 rounded-xl bg-white/90 text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-60"
+          />
+        </div>
+        <p className="text-white/35 text-xs mt-1">Used by admin to send your earnings directly to M-Pesa</p>
+      </div>
+
       {/* Book Title */}
       <div className="mb-5">
         <label className="block text-sm font-semibold text-white/80 mb-2 uppercase tracking-wider">
@@ -173,6 +203,22 @@ export default function BookUpload({ user }) {
           disabled={uploading}
           className="w-full px-4 py-3 rounded-xl bg-white/90 text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-60"
         />
+      </div>
+
+      {/* Description */}
+      <div className="mb-5">
+        <label className="block text-sm font-semibold text-white/80 mb-2 uppercase tracking-wider">
+          Book Description *
+        </label>
+        <textarea
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+          placeholder="Write a short synopsis of your book (2–5 sentences). This is what readers will see before deciding to read or buy."
+          rows={4}
+          disabled={uploading}
+          className="w-full px-4 py-3 rounded-xl bg-white/90 text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-60 resize-none"
+        />
+        <p className="text-white/35 text-xs mt-1">{description.length}/500 characters</p>
       </div>
 
       {/* Genre */}

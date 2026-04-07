@@ -1,6 +1,7 @@
 // src/components/AdminDashboard.jsx
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
+import { supabaseConfig } from '../config'
 import SecureReader from './SecureReader'
 
 export default function AdminDashboard({ adminDashboardBg, searchQuery = "" }) {
@@ -21,6 +22,8 @@ export default function AdminDashboard({ adminDashboardBg, searchQuery = "" }) {
   const [adminMobileOpen, setAdminMobileOpen] = useState(false)
   const [selectedGenre, setSelectedGenre] = useState('Sci-Fi')
   const [selectedBookForReading, setSelectedBookForReading] = useState(null)
+  const [payouts, setPayouts]           = useState([])   // per-author donation totals
+  const [markingPaid, setMarkingPaid]   = useState(null) // authorId being marked
 
   const genres = [
     'Sci-Fi', 'Romance', 'Mystery', 'Fantasy', 'Horror', 'Thriller', 'Historical',
@@ -108,11 +111,130 @@ export default function AdminDashboard({ adminDashboardBg, searchQuery = "" }) {
     finally { setLoading(false) }
   }
 
+  const fetchPayouts = async () => {
+    setLoading(true); setError(null)
+    try {
+      // Authors with mpesa_phone
+      const { data: authUsers, error: uErr } = await supabase
+        .from('users').select('id, author_name, email, mpesa_phone').eq('role', 'author')
+      if (uErr) throw uErr
+
+      // Donations
+      const { data: dons } = await supabase.from('donations')
+        .select('author_id, amount, status')
+      // Book purchase earnings (author gets 70%) — two-step to avoid broken join
+      const { data: purchases } = await supabase.from('book_purchases')
+        .select('book_id, amount_paid, payout_status')
+      const { data: allBooks } = await supabase.from('books').select('id, author_id')
+      const bookAuthorMap = {}
+      ;(allBooks || []).forEach(b => { bookAuthorMap[b.id] = b.author_id })
+      // Ad earnings
+      const { data: ads } = await supabase.from('ad_earnings')
+        .select('author_id, author_share, payout_status')
+
+      const grouped = {}
+      const ensure = (id) => {
+        if (!grouped[id]) grouped[id] = {
+          donations_pending: 0, donations_paid: 0,
+          sales_pending: 0,     sales_paid: 0,
+          ads_pending: 0,       ads_paid: 0,
+        }
+      }
+
+      ;(dons || []).forEach(d => {
+        ensure(d.author_id)
+        if (d.status === 'paid_out') grouped[d.author_id].donations_paid += Number(d.amount)
+        else grouped[d.author_id].donations_pending += Number(d.amount)
+      })
+      ;(purchases || []).forEach(p => {
+        const aid = bookAuthorMap[p.book_id]
+        if (!aid) return
+        ensure(aid)
+        const share = Number(p.amount_paid) * 0.70  // 70% to author
+        if (p.payout_status === 'paid_out') grouped[aid].sales_paid += share
+        else grouped[aid].sales_pending += share
+      })
+      ;(ads || []).forEach(a => {
+        ensure(a.author_id)
+        if (a.payout_status === 'paid_out') grouped[a.author_id].ads_paid += Number(a.author_share)
+        else grouped[a.author_id].ads_pending += Number(a.author_share)
+      })
+
+      const result = (authUsers || []).map(u => {
+        const g = grouped[u.id] || {}
+        return {
+          ...u,
+          donations_pending: g.donations_pending || 0,
+          donations_paid:    g.donations_paid    || 0,
+          sales_pending:     g.sales_pending     || 0,
+          sales_paid:        g.sales_paid        || 0,
+          ads_pending:       g.ads_pending       || 0,
+          ads_paid:          g.ads_paid          || 0,
+          total_pending:     (g.donations_pending || 0) + (g.sales_pending || 0) + (g.ads_pending || 0),
+          total_paid:        (g.donations_paid || 0) + (g.sales_paid || 0) + (g.ads_paid || 0),
+        }
+      }).filter(u => u.total_pending + u.total_paid > 0)
+        .sort((a, b) => b.total_pending - a.total_pending)
+
+      setPayouts(result)
+    } catch (err) { setError(err.message) }
+    finally { setLoading(false) }
+  }
+
+  const sendMpesaPayout = async (author) => {
+    if (!author.mpesa_phone) {
+      alert('This author has not provided an M-Pesa number yet.')
+      return
+    }
+    const amount = Math.floor(author.total_pending)
+    if (amount < 10) { alert('Minimum payout is KES 10.'); return }
+    if (!window.confirm(`Send KES ${amount} to ${author.author_name} (${author.mpesa_phone}) via M-Pesa?`)) return
+    setMarkingPaid(author.id)
+    try {
+      // Call Supabase Edge Function (keeps secret key server-side)
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(
+        `${supabaseConfig.url}/functions/v1/send-payout`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            author_name: author.author_name,
+            mpesa_phone: author.mpesa_phone,
+            amount,
+          }),
+        }
+      )
+      const result = await res.json()
+      if (!result.success) throw new Error(result.error)
+
+      // Mark everything as paid_out in DB
+      await Promise.all([
+        supabase.from('donations').update({ status: 'paid_out' }).eq('author_id', author.id).neq('status', 'paid_out'),
+        supabase.from('ad_earnings').update({ payout_status: 'paid_out' }).eq('author_id', author.id).neq('payout_status', 'paid_out'),
+      ])
+      // For book purchases we need to go through books
+      const { data: authorBooks } = await supabase.from('books').select('id').eq('author_id', author.id)
+      if (authorBooks?.length) {
+        const bookIds = authorBooks.map(b => b.id)
+        await supabase.from('book_purchases').update({ payout_status: 'paid_out' }).in('book_id', bookIds).neq('payout_status', 'paid_out')
+      }
+
+      alert(`✅ KES ${amount} sent to ${author.mpesa_phone} successfully!`)
+      fetchPayouts()
+    } catch (err) { alert('Payout failed: ' + err.message) }
+    finally { setMarkingPaid(null) }
+  }
+
   useEffect(() => {
     if (adminTab === 'pending') fetchPendingBooks()
     else if (adminTab === 'genres') fetchApprovedBooks()
     else if (adminTab === 'users') fetchUsers()
     else if (adminTab === 'views') fetchBookViews()
+    else if (adminTab === 'payouts') fetchPayouts()
   }, [adminTab])
 
   // ── Actions ─────────────────────────────────────────────────────────────
@@ -231,6 +353,7 @@ export default function AdminDashboard({ adminDashboardBg, searchQuery = "" }) {
     { key: 'genres',  label: 'Catalogue', icon: '▦' },
     { key: 'users',   label: 'Members',   icon: '◎' },
     { key: 'views',   label: 'Analytics', icon: '▲' },
+    { key: 'payouts',  label: 'Payouts',   icon: '₭' },
   ]
 
   return (
@@ -576,6 +699,79 @@ export default function AdminDashboard({ adminDashboardBg, searchQuery = "" }) {
               )}
             </div>
           )}
+          {/* PAYOUTS */}
+          {adminTab === 'payouts' && (
+            <div>
+              <div style={{ marginBottom: '2rem' }}>
+                <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.2em', fontFamily: 'sans-serif', marginBottom: '0.5rem' }}>Author Payouts</p>
+                <h2 style={{ fontSize: '1.75rem', color: 'rgba(255,255,255,0.85)' }}>Earnings Disbursements</h2>
+                <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: '0.9rem', fontFamily: 'sans-serif', marginTop: '0.5rem', maxWidth: '580px', lineHeight: 1.6 }}>
+                  Each author card shows earnings from <strong style={{color:'rgba(255,255,255,0.6)'}}>donations</strong>, <strong style={{color:'rgba(255,255,255,0.6)'}}>book sales (70% share)</strong>, and <strong style={{color:'rgba(255,255,255,0.6)'}}>ad revenue</strong>. Click <em>Send via M-Pesa</em> to initiate a direct Paystack transfer to their phone.
+                </p>
+              </div>
+
+              {loading && <p style={{ color: 'rgba(255,255,255,0.55)', fontFamily: 'sans-serif' }}>Loading…</p>}
+              {error && <p style={{ color: '#f87171', fontFamily: 'sans-serif' }}>Error: {error}</p>}
+              {!loading && payouts.length === 0 && (
+                <p style={{ color: 'rgba(255,255,255,0.35)', fontFamily: 'sans-serif', padding: '3rem', textAlign: 'center' }}>No author earnings recorded yet.</p>
+              )}
+
+              {!loading && payouts.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: '760px' }}>
+                  {payouts.map(author => (
+                    <div key={author.id} style={{ background: 'rgba(255,255,255,0.02)', border: author.total_pending > 0 ? '1px solid rgba(251,191,36,0.25)' : '1px solid rgba(34,197,94,0.15)', borderRadius: '16px', padding: '1.5rem' }}>
+
+                      {/* Author header */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                        <div>
+                          <p style={{ fontFamily: 'Georgia, serif', fontSize: '1.05rem', color: 'rgba(255,255,255,0.9)', fontWeight: 600, marginBottom: '0.2rem' }}>{author.author_name || 'Unknown Author'}</p>
+                          <p style={{ fontFamily: 'sans-serif', fontSize: '0.8rem', color: 'rgba(255,255,255,0.4)' }}>{author.email}</p>
+                          <p style={{ fontFamily: 'sans-serif', fontSize: '0.8rem', marginTop: '0.2rem', color: author.mpesa_phone ? '#22c55e' : '#f87171' }}>
+                            {author.mpesa_phone ? '📱 ' + author.mpesa_phone : '⚠️ No M-Pesa number on file'}
+                          </p>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: 'sans-serif', marginBottom: '0.25rem' }}>Total Pending</p>
+                          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: author.total_pending > 0 ? '#fbbf24' : 'rgba(255,255,255,0.3)', fontFamily: 'sans-serif' }}>{fmt(author.total_pending)}</p>
+                        </div>
+                      </div>
+
+                      {/* Breakdown grid */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                        {[
+                          { label: 'Donations', pending: author.donations_pending, paid: author.donations_paid, color: '#d4af37' },
+                          { label: 'Book Sales (70%)', pending: author.sales_pending, paid: author.sales_paid, color: '#a78bfa' },
+                          { label: 'Ad Revenue', pending: author.ads_pending, paid: author.ads_paid, color: '#34d399' },
+                        ].map(({ label, pending, paid, color }) => (
+                          <div key={label} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '0.875rem' }}>
+                            <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: 'sans-serif', marginBottom: '0.4rem' }}>{label}</p>
+                            <p style={{ fontSize: '0.95rem', fontWeight: 700, color, fontFamily: 'sans-serif' }}>{fmt(pending)}</p>
+                            <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.3)', fontFamily: 'sans-serif', marginTop: '0.2rem' }}>paid: {fmt(paid)}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Action */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        {author.total_pending > 0 ? (
+                          <button
+                            onClick={() => sendMpesaPayout(author)}
+                            disabled={markingPaid === author.id}
+                            style={{ padding: '0.65rem 1.5rem', borderRadius: '10px', border: 'none', background: 'linear-gradient(135deg, #22c55e, #16a34a)', color: 'white', fontSize: '0.875rem', fontWeight: 700, cursor: markingPaid === author.id ? 'not-allowed' : 'pointer', fontFamily: 'sans-serif', opacity: markingPaid === author.id ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            {markingPaid === author.id ? '⏳ Sending…' : '📱 Send ' + fmt(author.total_pending) + ' via M-Pesa'}
+                          </button>
+                        ) : (
+                          <span style={{ padding: '0.5rem 1rem', borderRadius: '10px', border: '1px solid rgba(34,197,94,0.25)', color: '#22c55e', fontSize: '0.8rem', fontFamily: 'sans-serif' }}>✓ All earnings paid out</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button onClick={fetchPayouts} style={{ marginTop: '1.5rem', background: 'none', border: 'none', color: 'rgba(255,255,255,0.45)', fontSize: '0.9rem', cursor: 'pointer', fontFamily: 'sans-serif', textDecoration: 'underline' }}>↻ Refresh</button>
+            </div>
+          )}
+
         </main>
       </div>
 
